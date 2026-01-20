@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(php:*)",
+      "Bash(node --version:*)",
+      "Bash(composer --version:*)",
+      "Bash(test:*)",
+      "Bash(npm install)",
+      "Bash(npm run build:*)",
+      "Bash(timeout:*)"
+    ]
+  }
+}
