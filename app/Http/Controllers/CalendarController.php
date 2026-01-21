@@ -18,9 +18,12 @@ class CalendarController extends Controller
      */
     public function index(Request $request): Response
     {
-        // Default to showing current month
-        $startDate = $request->input('start_date', now()->startOfMonth()->toDateString());
-        $endDate = $request->input('end_date', now()->endOfMonth()->toDateString());
+        // Default to showing current month only
+        $defaultStart = now()->startOfMonth()->toDateString();
+        $defaultEnd = now()->endOfMonth()->toDateString();
+
+        $startDate = $request->input('start_date', $defaultStart);
+        $endDate = $request->input('end_date', $defaultEnd);
 
         // Get visible employees (including guests for capacity planning)
         $users = User::where('is_visible', true)
@@ -48,8 +51,21 @@ class CalendarController extends Controller
                 ];
             });
 
-        // Get all project allocations (no date filtering to show everything)
+        // Get project allocations filtered by date range (with overlap handling)
         $allocations = ProjectAllocation::with(['user', 'project'])
+            ->where(function($query) use ($startDate, $endDate) {
+                $query->where(function($q) use ($startDate, $endDate) {
+                    // Starts within range
+                    $q->whereBetween('start_date', [$startDate, $endDate]);
+                })->orWhere(function($q) use ($startDate, $endDate) {
+                    // Ends within range
+                    $q->whereBetween('end_date', [$startDate, $endDate]);
+                })->orWhere(function($q) use ($startDate, $endDate) {
+                    // Spans entire range
+                    $q->where('start_date', '<=', $startDate)
+                      ->where('end_date', '>=', $endDate);
+                });
+            })
             ->get()
             ->map(function ($allocation) {
                 return [
@@ -70,8 +86,21 @@ class CalendarController extends Controller
                 ];
             });
 
-        // Get all annual leave (no date filtering to show everything)
+        // Get annual leave filtered by date range (with overlap handling)
         $annualLeave = AnnualLeave::with('user')
+            ->where(function($query) use ($startDate, $endDate) {
+                $query->where(function($q) use ($startDate, $endDate) {
+                    // Starts within range
+                    $q->whereBetween('start_date', [$startDate, $endDate]);
+                })->orWhere(function($q) use ($startDate, $endDate) {
+                    // Ends within range
+                    $q->whereBetween('end_date', [$startDate, $endDate]);
+                })->orWhere(function($q) use ($startDate, $endDate) {
+                    // Spans entire range
+                    $q->where('start_date', '<=', $startDate)
+                      ->where('end_date', '>=', $endDate);
+                });
+            })
             ->get()
             ->map(function ($leave) {
                 return [

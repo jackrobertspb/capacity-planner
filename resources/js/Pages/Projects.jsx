@@ -126,12 +126,12 @@ export default function Projects({ projects }) {
                             <div className="flex items-center gap-3">
                                 <span className="text-sm font-medium text-muted-foreground">{auth.user?.name}</span>
                                 {auth.user?.role === 'admin' && (
-                                    <Link
+                                    <a
                                         href="/admin"
                                         className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors px-2.5 py-1.5 rounded hover:bg-muted/50"
                                     >
                                         Admin Panel
-                                    </Link>
+                                    </a>
                                 )}
                                 <Link
                                     href={route('profile.edit')}

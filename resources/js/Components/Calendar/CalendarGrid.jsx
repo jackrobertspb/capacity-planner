@@ -14,7 +14,7 @@ import {
     startOfDay,
     addDays,
 } from "date-fns";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, forwardRef } from "react";
 import {
     ChevronDown,
     ChevronRight,
@@ -30,7 +30,7 @@ import {
 import AllocationBlock from "../Allocation/AllocationBlock";
 import { router, Link } from "@inertiajs/react";
 
-export default function CalendarGrid({
+const CalendarGrid = forwardRef(({
     view,
     viewMode,
     sortMode,
@@ -54,7 +54,9 @@ export default function CalendarGrid({
     onViewModeChange,
     onSortModeChange,
     onToggleCompress,
-}) {
+    isLoadingPrevious = false,
+    isLoadingNext = false,
+}, ref) => {
     // Group projects by status for project view
     const getProjectRows = () => {
         if (viewMode !== "project") return [];
@@ -107,6 +109,9 @@ export default function CalendarGrid({
     const [resizeStartX, setResizeStartX] = useState(0);
     const [resizeStartDays, setResizeStartDays] = useState(0);
     const [resizePreviewDays, setResizePreviewDays] = useState(0);
+    const [resizePreviewStartOffset, setResizePreviewStartOffset] = useState(0); // Days to shift start when resizing left
+    const [isActivelyResizing, setIsActivelyResizing] = useState(false); // Track if mouse is down
+    const [resizeOriginalStartDate, setResizeOriginalStartDate] = useState(null); // Store original start date to detect when data updates
 
     // Project assignment dropdown
     const [showProjectMenu, setShowProjectMenu] = useState(null); // { rowId, x, y }
@@ -126,9 +131,11 @@ export default function CalendarGrid({
     const [draggingAllocation, setDraggingAllocation] = useState(null);
     const [dragOffset, setDragOffset] = useState(0); // Days offset from original start
     const [dragPreviewStart, setDragPreviewStart] = useState(null);
+    const [dragOriginalStartDate, setDragOriginalStartDate] = useState(null); // Store original start date to detect when data updates
+    const [isActivelyDragging, setIsActivelyDragging] = useState(false); // Track if mouse is down
+    const [dragGrabOffset, setDragGrabOffset] = useState(0); // Which day within the allocation was grabbed (0 = first day, 1 = second day, etc.)
     const dragStartPos = useRef(null); // Track initial mouse position
     const hasMoved = useRef(false); // Track if mouse has moved enough to be considered a drag
-    const [pendingMove, setPendingMove] = useState(null); // Track allocation being moved until reload completes
 
     // Context menu for allocations
     const [contextMenu, setContextMenu] = useState(null); // { allocation, isLeave, x, y }
@@ -153,9 +160,8 @@ export default function CalendarGrid({
             const weekEnd = endOfWeek(currentDate, { weekStartsOn: 1 });
             return eachDayOfInterval({ start: weekStart, end: weekEnd });
         } else {
-            const monthStart = startOfMonth(currentDate);
-            const monthEnd = endOfMonth(currentDate);
-            return eachDayOfInterval({ start: monthStart, end: monthEnd });
+            // Use the actual date range passed from parent (90-day window)
+            return eachDayOfInterval({ start: dateRange.start, end: dateRange.end });
         }
     };
 
@@ -174,65 +180,97 @@ export default function CalendarGrid({
 
     useEffect(() => {
         const handleMove = (e) => {
-            if (!resizingAllocation) return;
+            if (!resizingAllocation || !isActivelyResizing) return;
 
             const deltaX = e.clientX - resizeStartX;
-            const cellWidth = 80; // min-w-[80px]
+            const cellWidth = 60; // Calendar cells are 60px wide
             const deltaDays = Math.round(deltaX / cellWidth);
 
             let newDays = resizeStartDays;
+            let startOffset = 0; // How many days to shift the start position
+
             if (resizingAllocation.edge === "right") {
                 newDays = Math.max(1, resizeStartDays + deltaDays);
             } else {
-                newDays = Math.max(1, resizeStartDays - deltaDays);
+                // left edge - dragging left (negative deltaDays) should add days
+                // Since deltaDays is negative when dragging left, we ADD it (double negative)
+                newDays = Math.max(1, resizeStartDays + (-deltaDays));
+                // Calculate how many days to shift the start position
+                startOffset = -(newDays - resizeStartDays);
             }
 
             // Update preview in real-time
             setResizePreviewDays(newDays);
+            setResizePreviewStartOffset(startOffset);
         };
 
         const handleUp = async (e) => {
             if (!resizingAllocation) return;
+
+            // Immediately stop listening to mouse movements
+            setIsActivelyResizing(false);
 
             // Restore cursor and text selection
             document.body.style.userSelect = "";
             document.body.classList.remove("resizing-allocation");
 
             const deltaX = e.clientX - resizeStartX;
-            const cellWidth = 80;
+            const cellWidth = 60; // Calendar cells are 60px wide
             const deltaDays = Math.round(deltaX / cellWidth);
 
             let newDays = resizeStartDays;
             if (resizingAllocation.edge === "right") {
                 newDays = Math.max(1, resizeStartDays + deltaDays);
             } else {
-                newDays = Math.max(1, resizeStartDays - deltaDays);
+                // left edge - dragging left (negative deltaDays) should add days
+                // Since deltaDays is negative when dragging left, we ADD it (double negative)
+                newDays = Math.max(1, resizeStartDays + (-deltaDays));
             }
 
             // Only update if days changed
             if (newDays !== resizeStartDays) {
                 const allocation = resizingAllocation.allocation;
                 const isLeave = resizingAllocation.isLeave;
-                const startDate = startOfDay(
+                const originalStartDate = startOfDay(
                     parseISO(
                         isLeave ? allocation.start_date : allocation.start_date,
                     ),
                 );
+                const originalEndDate = startOfDay(
+                    parseISO(
+                        isLeave ? allocation.end_date : allocation.end_date,
+                    ),
+                );
 
+                console.log('BEFORE CALCULATION:', {
+                    edge: resizingAllocation.edge,
+                    originalStart: format(originalStartDate, 'yyyy-MM-dd'),
+                    originalEnd: format(originalEndDate, 'yyyy-MM-dd'),
+                    resizeStartDays: resizeStartDays,
+                    deltaDays: deltaDays,
+                    newDays: newDays,
+                });
+
+                let newStartDate;
                 let newEndDate;
+
                 if (resizingAllocation.edge === "right") {
-                    // Extending/shrinking from right
-                    newEndDate = new Date(startDate);
+                    // Extending/shrinking from right - keep start, change end
+                    newStartDate = originalStartDate;
+                    newEndDate = new Date(originalStartDate);
                     newEndDate.setDate(newEndDate.getDate() + newDays - 1);
                 } else {
-                    // Extending/shrinking from left
-                    const endDate = startOfDay(
-                        parseISO(
-                            isLeave ? allocation.end_date : allocation.end_date,
-                        ),
-                    );
-                    newEndDate = endDate;
+                    // Extending/shrinking from left - keep end date fixed, calculate new start
+                    newEndDate = originalEndDate;
+                    // Calculate new start date by going backwards from the end
+                    newStartDate = new Date(originalEndDate);
+                    newStartDate.setDate(newStartDate.getDate() - (newDays - 1));
                 }
+
+                console.log('AFTER CALCULATION:', {
+                    newStart: format(newStartDate, 'yyyy-MM-dd'),
+                    newEnd: format(newEndDate, 'yyyy-MM-dd'),
+                });
 
                 try {
                     const csrfToken =
@@ -249,7 +287,7 @@ export default function CalendarGrid({
                                 "X-CSRF-TOKEN": csrfToken,
                             },
                             body: JSON.stringify({
-                                start_date: format(startDate, "yyyy-MM-dd"),
+                                start_date: format(newStartDate, "yyyy-MM-dd"),
                                 end_date: format(newEndDate, "yyyy-MM-dd"),
                                 days_count: newDays,
                             }),
@@ -264,7 +302,7 @@ export default function CalendarGrid({
                                 "X-CSRF-TOKEN": csrfToken,
                             },
                             body: JSON.stringify({
-                                start_date: format(startDate, "yyyy-MM-dd"),
+                                start_date: format(newStartDate, "yyyy-MM-dd"),
                                 end_date: format(newEndDate, "yyyy-MM-dd"),
                             }),
                         });
@@ -273,16 +311,29 @@ export default function CalendarGrid({
                     router.reload({
                         only: ["allocations", "annualLeave"],
                         preserveScroll: true,
+                        onFinish: () => {
+                            // Clear resize state only after reload completes
+                            setResizingAllocation(null);
+                            setResizePreviewStartOffset(0);
+                            setResizeOriginalStartDate(null);
+                        }
                     });
                 } catch (error) {
                     console.error("Error resizing:", error);
+                    // Clear state on error
+                    setResizingAllocation(null);
+                    setResizePreviewStartOffset(0);
+                    setResizeOriginalStartDate(null);
                 }
+            } else {
+                // No change in days, just clear state immediately
+                setResizingAllocation(null);
+                setResizePreviewStartOffset(0);
+                setResizeOriginalStartDate(null);
             }
-
-            setResizingAllocation(null);
         };
 
-        if (resizingAllocation) {
+        if (isActivelyResizing) {
             window.addEventListener("mousemove", handleMove);
             window.addEventListener("mouseup", handleUp);
             return () => {
@@ -290,7 +341,7 @@ export default function CalendarGrid({
                 window.removeEventListener("mouseup", handleUp);
             };
         }
-    }, [resizingAllocation, resizeStartX, resizeStartDays]);
+    }, [isActivelyResizing, resizingAllocation, resizeStartX, resizeStartDays]);
 
     const toggleRow = (rowId) => {
         setExpandedRows((prev) => ({
@@ -423,6 +474,21 @@ export default function CalendarGrid({
 
             // Handle time-off (annual leave)
             if (dragProjectId === "time-off") {
+                const payload = {
+                    user_id: dragRowId,
+                    start_date: format(startDay, "yyyy-MM-dd"),
+                    end_date: format(endDay, "yyyy-MM-dd"),
+                    days_count: daysCount,
+                    status: "approved",
+                };
+
+                console.log("=== TIME OFF CREATION DEBUG ===");
+                console.log("CSRF Token:", csrfToken);
+                console.log("Payload:", payload);
+                console.log("Start Day:", startDay);
+                console.log("End Day:", endDay);
+                console.log("Days Count:", daysCount);
+
                 const response = await fetch("/annual-leave", {
                     method: "POST",
                     headers: {
@@ -431,16 +497,15 @@ export default function CalendarGrid({
                         Accept: "application/json",
                         "X-CSRF-TOKEN": csrfToken,
                     },
-                    body: JSON.stringify({
-                        user_id: dragRowId,
-                        start_date: format(startDay, "yyyy-MM-dd"),
-                        end_date: format(endDay, "yyyy-MM-dd"),
-                        days_count: daysCount,
-                        status: "approved",
-                    }),
+                    body: JSON.stringify(payload),
                 });
 
+                console.log("Response Status:", response.status);
+                console.log("Response OK:", response.ok);
+
                 if (response.ok) {
+                    const responseData = await response.json();
+                    console.log("Success Response:", responseData);
                     router.reload({
                         only: ["allocations", "annualLeave"],
                         preserveScroll: true,
@@ -451,6 +516,12 @@ export default function CalendarGrid({
                 } else {
                     const errorData = await response.json();
                     console.error("Failed to create leave:", errorData);
+                    console.error("Error response full details:", {
+                        status: response.status,
+                        statusText: response.statusText,
+                        headers: Object.fromEntries(response.headers.entries()),
+                        body: errorData
+                    });
                     alert("Failed to create time off. Please try again.");
                     isProcessingDrag.current = false;
                 }
@@ -549,6 +620,9 @@ export default function CalendarGrid({
         setResizeStartX(e.clientX);
         setResizeStartDays(days);
         setResizePreviewDays(days);
+        setResizePreviewStartOffset(0); // Reset offset at start
+        setResizeOriginalStartDate(allocation.start_date); // Store original start date
+        setIsActivelyResizing(true); // Start listening to mouse movements
     };
 
     const handleDragAllocationStart = (e, allocation, isLeave) => {
@@ -581,6 +655,26 @@ export default function CalendarGrid({
 
         document.body.style.userSelect = "none";
 
+        // Calculate which day within the allocation was grabbed
+        const table = document.querySelector("table");
+        if (table) {
+            const tableRect = table.getBoundingClientRect();
+            const cellIndex = Math.floor((e.clientX - tableRect.left - 274) / 60);
+
+            // Find which day in the calendar corresponds to this cell
+            const startDate = startOfDay(parseISO(allocation.start_date));
+            const clickedDay = days[cellIndex];
+
+            if (clickedDay) {
+                // Calculate offset within the allocation (0 = first day, 1 = second day, etc.)
+                const grabOffset = differenceInDays(startOfDay(clickedDay), startDate);
+                setDragGrabOffset(Math.max(0, grabOffset)); // Ensure non-negative
+                console.log("Grab offset:", grabOffset, "days from start");
+            } else {
+                setDragGrabOffset(0);
+            }
+        }
+
         // Set initial preview to allocation's current position (no offset yet)
         const startDate = startOfDay(
             parseISO(isLeave ? allocation.start_date : allocation.start_date),
@@ -589,6 +683,8 @@ export default function CalendarGrid({
         setDraggingAllocation({ allocation, isLeave });
         setDragOffset(0); // Start with no offset
         setDragPreviewStart(startDate); // Start preview at current position
+        setDragOriginalStartDate(allocation.start_date); // Store original start date
+        setIsActivelyDragging(true); // Start listening to mouse movements
     };
 
     useEffect(() => {
@@ -614,7 +710,10 @@ export default function CalendarGrid({
             const tableRect = table.getBoundingClientRect();
             const cellIndex = Math.floor((e.clientX - tableRect.left - 274) / 60);
 
-            const clampedIndex = Math.max(0, Math.min(cellIndex, days.length - 1));
+            // Subtract the grab offset to maintain the relative position where the user grabbed
+            const targetCellIndex = cellIndex - dragGrabOffset;
+            const clampedIndex = Math.max(0, Math.min(targetCellIndex, days.length - 1));
+
             if (clampedIndex >= 0 && clampedIndex < days.length) {
                 const targetDay = days[clampedIndex];
                 const originalStart = startOfDay(
@@ -636,6 +735,9 @@ export default function CalendarGrid({
         const handleDragEnd = async (e) => {
             if (!draggingAllocation) return;
 
+            // Immediately stop listening to mouse movements
+            setIsActivelyDragging(false);
+
             document.body.style.userSelect = "";
             document.body.classList.remove("dragging-allocation");
 
@@ -650,6 +752,8 @@ export default function CalendarGrid({
                 setDraggingAllocation(null);
                 setDragOffset(0);
                 setDragPreviewStart(null);
+                setDragOriginalStartDate(null);
+                setDragGrabOffset(0);
                 dragStartPos.current = null;
                 hasMoved.current = false;
                 return;
@@ -680,14 +784,6 @@ export default function CalendarGrid({
                     "New:",
                     format(newStart, "yyyy-MM-dd"),
                 );
-
-                // Set pending move to keep preview visible during API call
-                setPendingMove({
-                    allocation,
-                    isLeave: draggingAllocation.isLeave,
-                    newStart,
-                    newEnd,
-                });
 
                 try {
                     const csrfToken =
@@ -726,14 +822,27 @@ export default function CalendarGrid({
                                 replace: true,
                                 onFinish: () => {
                                     console.log("Reload completed");
-                                    setPendingMove(null);
+                                    // Clear dragging state only after data is reloaded
+                                    setDraggingAllocation(null);
+                                    setDragOffset(0);
+                                    setDragPreviewStart(null);
+                                    setDragOriginalStartDate(null);
+                                    setDragGrabOffset(0);
+                                    dragStartPos.current = null;
+                                    hasMoved.current = false;
                                 },
                             });
                         } else {
                             const errorData = await response.json();
                             console.error("Failed to move leave:", errorData);
                             alert("Failed to move leave. Please try again.");
-                            setPendingMove(null);
+                            // Clear dragging state on error too
+                            setDraggingAllocation(null);
+                            setDragOffset(0);
+                            setDragPreviewStart(null);
+                            setDragOriginalStartDate(null);
+                            dragStartPos.current = null;
+                            hasMoved.current = false;
                         }
                     } else {
                         // Update project allocation
@@ -785,7 +894,14 @@ export default function CalendarGrid({
                                 replace: true,
                                 onFinish: () => {
                                     console.log("Reload completed");
-                                    setPendingMove(null);
+                                    // Clear dragging state only after data is reloaded
+                                    setDraggingAllocation(null);
+                                    setDragOffset(0);
+                                    setDragPreviewStart(null);
+                                    setDragOriginalStartDate(null);
+                                    setDragGrabOffset(0);
+                                    dragStartPos.current = null;
+                                    hasMoved.current = false;
                                 },
                             });
                         } else {
@@ -801,7 +917,13 @@ export default function CalendarGrid({
                             alert(
                                 `Failed to move allocation: ${errorData.message || "Please try again."}`,
                             );
-                            setPendingMove(null);
+                            // Clear dragging state on error too
+                            setDraggingAllocation(null);
+                            setDragOffset(0);
+                            setDragPreviewStart(null);
+                            setDragOriginalStartDate(null);
+                            dragStartPos.current = null;
+                            hasMoved.current = false;
                         }
                     }
                 } catch (error) {
@@ -809,18 +931,27 @@ export default function CalendarGrid({
                     alert(
                         `Error moving allocation: ${error.message || "Please try again."}`,
                     );
-                    setPendingMove(null);
+                    // Clear dragging state on exception too
+                    setDraggingAllocation(null);
+                    setDragOffset(0);
+                    setDragPreviewStart(null);
+                    setDragOriginalStartDate(null);
+                    dragStartPos.current = null;
+                    hasMoved.current = false;
                 }
+            } else {
+                // No offset, just clear dragging state
+                setDraggingAllocation(null);
+                setDragOffset(0);
+                setDragPreviewStart(null);
+                setDragOriginalStartDate(null);
+                setDragGrabOffset(0);
+                dragStartPos.current = null;
+                hasMoved.current = false;
             }
-
-            setDraggingAllocation(null);
-            setDragOffset(0);
-            setDragPreviewStart(null);
-            dragStartPos.current = null;
-            hasMoved.current = false;
         };
 
-        if (draggingAllocation) {
+        if (isActivelyDragging) {
             document.addEventListener("mousemove", handleDragMove);
             document.addEventListener("mouseup", handleDragEnd);
 
@@ -829,7 +960,7 @@ export default function CalendarGrid({
                 document.removeEventListener("mouseup", handleDragEnd);
             };
         }
-    }, [draggingAllocation, dragOffset, dragPreviewStart, days]);
+    }, [isActivelyDragging, draggingAllocation, dragOffset, dragPreviewStart, dragGrabOffset, days]);
 
     const renderAllocationBlock = (
         allocation,
@@ -837,20 +968,12 @@ export default function CalendarGrid({
         isLeave = false,
         allocIndex = 0,
     ) => {
-        // Don't render the original if it's being moved (pending move)
-        if (
-            pendingMove &&
-            pendingMove.allocation.id === allocation.id &&
-            pendingMove.isLeave === isLeave
-        ) {
-            return null;
-        }
-
         // Strict check for dragging state
         const isThisBeingDragged =
             draggingAllocation &&
             draggingAllocation.allocation.id === allocation.id &&
-            draggingAllocation.isLeave === isLeave;
+            draggingAllocation.isLeave === isLeave &&
+            allocation.start_date === dragOriginalStartDate; // Only apply preview if data hasn't updated
 
         const startDate = startOfDay(
             parseISO(isLeave ? allocation.start_date : allocation.start_date),
@@ -874,11 +997,15 @@ export default function CalendarGrid({
         const dayIndex = days.findIndex((d) => isSameDay(d, firstDayDate));
 
         // Use preview days if this allocation is being resized
+        // Only apply preview if the allocation hasn't been updated yet (start_date still matches original)
         const isBeingResized =
             resizingAllocation &&
-            resizingAllocation.allocation.id === allocation.id;
+            resizingAllocation.allocation.id === allocation.id &&
+            allocation.start_date === resizeOriginalStartDate;
+        let startOffsetDays = 0;
         if (isBeingResized) {
             daysToSpan = resizePreviewDays;
+            startOffsetDays = resizePreviewStartOffset;
         }
 
         // Calculate z-index to ensure proper stacking (higher index = on top)
@@ -898,9 +1025,10 @@ export default function CalendarGrid({
                     className={`absolute top-1 left-1 right-1 h-[calc(100%-0.5rem)] rounded-md bg-orange-500 text-white text-xs px-1 py-1 font-medium shadow-sm flex items-center group/alloc cursor-move overflow-hidden ${isBeingResized ? "opacity-70" : ""}`}
                     style={{
                         width: `calc(${daysToSpan * 100}% - 0.5rem)`,
+                        transform: isBeingResized ? `translateX(${startOffsetDays * 60}px)` : 'none',
                         transition: isBeingResized
                             ? "none"
-                            : "width 0.1s ease-out",
+                            : "width 0.1s ease-out, transform 0.1s ease-out",
                         zIndex: zIndex,
                     }}
                     onMouseDown={(e) => {
@@ -961,7 +1089,8 @@ export default function CalendarGrid({
                 style={{
                     width: `calc(${daysToSpan * 100}% - 0.5rem)`,
                     backgroundColor: bgColor,
-                    transition: isBeingResized ? "none" : "width 0.1s ease-out",
+                    transform: isBeingResized ? `translateX(${startOffsetDays * 60}px)` : 'none',
+                    transition: isBeingResized ? "none" : "width 0.1s ease-out, transform 0.1s ease-out",
                     zIndex: zIndex,
                 }}
                 onMouseDown={(e) => {
@@ -1023,15 +1152,16 @@ export default function CalendarGrid({
 
     return (
         <div className="relative h-full flex flex-col">
-            <div className="relative flex-1 overflow-hidden">
+            <div ref={ref} className="relative flex-1 overflow-x-auto overflow-y-hidden custom-scrollbar">
                 {/* Background columns extending to bottom */}
                 <div className="absolute inset-0 flex pointer-events-none">
                     <div
                         className="sticky left-0 z-0"
                         style={{
                             backgroundColor: "hsl(var(--card))",
-                            width: "334px",
-                            maxWidth: "334px",
+                            width: "275px",
+                            minWidth: "275px",
+                            maxWidth: "275px",
                             boxSizing: "border-box",
                         }}
                     />
@@ -1047,8 +1177,10 @@ export default function CalendarGrid({
                     style={{
                         borderSpacing: 0,
                         borderCollapse: "separate",
-                        minWidth: `${500 + (days.length * 60)}px`,
+                        minWidth: `${277 + (days.length * 60)}px`,
+                        width: `${277 + (days.length * 60)}px`,
                         height: "100%",
+                        tableLayout: "fixed",
                     }}
                 >
                     {/* Month headers */}
@@ -1058,8 +1190,9 @@ export default function CalendarGrid({
                                 style={{
                                     backgroundColor: "hsl(var(--muted))",
                                     borderRight: "2px solid hsl(var(--border))",
-                                    width: "274px",
-                                    maxWidth: "274px",
+                                    width: "275px",
+                                    minWidth: "275px",
+                                    maxWidth: "275px",
                                 }}
                                 className="sticky left-0 z-30 px-4 py-2"
                             >
@@ -1158,11 +1291,32 @@ export default function CalendarGrid({
                                 style={{
                                     backgroundColor: "hsl(var(--muted))",
                                     borderRight: "2px solid hsl(var(--border))",
-                                    width: "274px",
-                                    maxWidth: "274px",
+                                    width: "275px",
+                                    minWidth: "275px",
+                                    maxWidth: "275px",
                                 }}
                                 className="px-4 py-2 text-left sticky left-0 z-30"
                             ></th>
+
+                            {/* Loading indicator for previous dates */}
+                            {isLoadingPrevious && (
+                                <th
+                                    key="loading-prev"
+                                    style={{
+                                        backgroundColor: "hsl(var(--muted))",
+                                        borderLeft: "1px solid hsl(var(--border) / 0.5)",
+                                        width: "60px",
+                                        minWidth: "60px",
+                                        maxWidth: "60px",
+                                    }}
+                                    className="px-1 py-2 text-center"
+                                >
+                                    <div className="flex items-center justify-center h-full">
+                                        <div className="animate-spin h-4 w-4 border-2 border-primary border-t-transparent rounded-full" />
+                                    </div>
+                                </th>
+                            )}
+
                             {days.map((day, idx) => {
                                 const isToday = isSameDay(day, today);
                                 const isWeekend =
@@ -1178,9 +1332,10 @@ export default function CalendarGrid({
                                                     ? "none"
                                                     : "1px solid hsl(var(--border) / 0.5)",
                                             width: "60px",
+                                            minWidth: "60px",
                                             maxWidth: "60px",
                                         }}
-                                        className={`px-1 py-2 text-center font-semibold text-[0.65rem] min-w-[60px] ${
+                                        className={`px-1 py-2 text-center font-semibold text-[0.65rem] ${
                                             isToday
                                                 ? "text-primary"
                                                 : "text-foreground"
@@ -1192,6 +1347,25 @@ export default function CalendarGrid({
                                     </th>
                                 );
                             })}
+
+                            {/* Loading indicator for next dates */}
+                            {isLoadingNext && (
+                                <th
+                                    key="loading-next"
+                                    style={{
+                                        backgroundColor: "hsl(var(--muted))",
+                                        borderLeft: "1px solid hsl(var(--border) / 0.5)",
+                                        width: "60px",
+                                        minWidth: "60px",
+                                        maxWidth: "60px",
+                                    }}
+                                    className="px-1 py-2 text-center"
+                                >
+                                    <div className="flex items-center justify-center h-full">
+                                        <div className="animate-spin h-4 w-4 border-2 border-primary border-t-transparent rounded-full" />
+                                    </div>
+                                </th>
+                            )}
                         </tr>
                     </thead>
                     <tbody>
@@ -1226,7 +1400,9 @@ export default function CalendarGrid({
                                             key={row.id}
                                             className="group"
                                             style={{
-                                                borderBottom: "1px solid rgba(255, 255, 255, 0.15)"
+                                                borderBottom: isExpanded
+                                                    ? "1px solid hsl(var(--border) / 0.3)"
+                                                    : "2px solid hsl(var(--border))"
                                             }}
                                             onMouseEnter={(e) => {
                                                 e.currentTarget.style.backgroundColor = "hsl(var(--muted) / 0.5)";
@@ -1241,9 +1417,12 @@ export default function CalendarGrid({
                                                         "hsl(var(--card))",
                                                     borderRight:
                                                         "2px solid hsl(var(--border))",
-                                                    borderBottom: "1px solid rgba(255, 255, 255, 0.15)",
-                                                    width: "280px",
-                                                    maxWidth: "280px",
+                                                    borderBottom: isExpanded
+                                                        ? "none"
+                                                        : "2px solid hsl(var(--border))",
+                                                    width: "274px",
+                                                    minWidth: "274px",
+                                                    maxWidth: "274px",
                                                 }}
                                                 className="px-4 py-3 sticky left-0 z-20"
                                                 onMouseEnter={(e) => {
@@ -1277,6 +1456,21 @@ export default function CalendarGrid({
                                                     <div className="w-2 h-2 rounded-full bg-primary opacity-0 group-hover:opacity-100 transition-opacity"></div>
                                                 </div>
                                             </td>
+
+                                            {/* Loading cell for previous dates */}
+                                            {isLoadingPrevious && (
+                                                <td
+                                                    key={`${row.id}-loading-prev`}
+                                                    style={{
+                                                        borderLeft: "1px solid hsl(var(--border) / 0.3)",
+                                                        borderBottom: isExpanded
+                                                            ? "none"
+                                                            : "2px solid hsl(var(--border))",
+                                                    }}
+                                                    className="h-[44px] relative bg-muted/20"
+                                                />
+                                            )}
+
                                             {days.map((day, dayIdx) => {
                                                 const isToday = isSameDay(
                                                     day,
@@ -1294,7 +1488,9 @@ export default function CalendarGrid({
                                                                 dayIdx === 0
                                                                     ? "none"
                                                                     : "1px solid hsl(var(--border) / 0.3)",
-                                                            borderBottom: "1px solid rgba(255, 255, 255, 0.15)",
+                                                            borderBottom: isExpanded
+                                                                ? "none"
+                                                                : "2px solid hsl(var(--border))",
                                                         }}
                                                         className={`h-[44px] relative ${
                                                             isToday
@@ -1304,6 +1500,20 @@ export default function CalendarGrid({
                                                     ></td>
                                                 );
                                             })}
+
+                                            {/* Loading cell for next dates */}
+                                            {isLoadingNext && (
+                                                <td
+                                                    key={`${row.id}-loading-next`}
+                                                    style={{
+                                                        borderLeft: "1px solid hsl(var(--border) / 0.3)",
+                                                        borderBottom: isExpanded
+                                                            ? "none"
+                                                            : "2px solid hsl(var(--border))",
+                                                    }}
+                                                    className="h-[44px] relative bg-muted/20"
+                                                />
+                                            )}
                                         </tr>
 
                                         {/* Sub-rows (projects) */}
@@ -1314,7 +1524,9 @@ export default function CalendarGrid({
                                                         key={`${row.id}-${project.id}`}
                                                         className="group"
                                                         style={{
-                                                            borderBottom: projIdx === rowProjects.length - 1 ? "1px solid rgba(255, 255, 255, 0.15)" : "none"
+                                                            borderBottom: projIdx === rowProjects.length - 1
+                                                                ? "2px solid hsl(var(--border))"
+                                                                : "none"
                                                         }}
                                                         onMouseEnter={(e) => {
                                                             e.currentTarget.style.backgroundColor = "hsl(var(--muted) / 0.4)";
@@ -1329,8 +1541,12 @@ export default function CalendarGrid({
                                                                     "hsl(var(--card))",
                                                                 borderRight:
                                                                     "2px solid hsl(var(--border))",
-                                                                width: "280px",
-                                                                maxWidth: "280px",
+                                                                borderBottom: projIdx === rowProjects.length - 1
+                                                                    ? "2px solid hsl(var(--border))"
+                                                                    : "none",
+                                                                width: "274px",
+                                                                minWidth: "274px",
+                                                                maxWidth: "274px",
                                                             }}
                                                             className="pl-12 pr-4 py-2 sticky left-0 z-20"
                                                             onMouseEnter={(e) => {
@@ -1428,7 +1644,7 @@ export default function CalendarGrid({
                                                                         },
                                                                     );
 
-                                                                // Check if this cell is part of the drag preview
+                                                                // Check if this cell is part of the drag preview (create new allocation)
                                                                 const isDragPreview =
                                                                     isDraggingNew &&
                                                                     dragRowId ===
@@ -1458,6 +1674,37 @@ export default function CalendarGrid({
                                                                         },
                                                                     );
 
+                                                                // Check if this cell is part of a MOVE drag preview
+                                                                let isDragMovePreview = false;
+                                                                if (draggingAllocation && dragPreviewStart) {
+                                                                    const draggedAlloc = draggingAllocation.allocation;
+                                                                    const originalStart = parseISO(
+                                                                        draggingAllocation.isLeave
+                                                                            ? draggedAlloc.start_date
+                                                                            : draggedAlloc.start_date,
+                                                                    );
+                                                                    const originalEnd = parseISO(
+                                                                        draggingAllocation.isLeave
+                                                                            ? draggedAlloc.end_date
+                                                                            : draggedAlloc.end_date,
+                                                                    );
+                                                                    const duration = differenceInDays(originalEnd, originalStart);
+                                                                    const previewEnd = addDays(dragPreviewStart, duration);
+
+                                                                    // Check if preview applies to this row/project
+                                                                    const appliesToThisRow = draggingAllocation.isLeave
+                                                                        ? project.type === "leave" && draggedAlloc.user_id === row.id
+                                                                        : project.id === draggedAlloc.project_id && draggedAlloc.user_id === row.id;
+
+                                                                    if (appliesToThisRow) {
+                                                                        // Check if this day is within the preview range
+                                                                        isDragMovePreview = isWithinInterval(startOfDay(day), {
+                                                                            start: startOfDay(dragPreviewStart),
+                                                                            end: startOfDay(previewEnd),
+                                                                        });
+                                                                    }
+                                                                }
+
                                                                 return (
                                                                     <td
                                                                         key={
@@ -1469,17 +1716,20 @@ export default function CalendarGrid({
                                                                                 0
                                                                                     ? "none"
                                                                                     : "1px solid hsl(var(--border) / 0.3)",
-                                                                            outline: isHovered && !hasAllocation && !isDraggingNew && !resizingAllocation ? "2px dashed hsl(var(--primary) / 0.5)" : "none",
+                                                                            borderBottom: projIdx === rowProjects.length - 1
+                                                                                ? "2px solid hsl(var(--border))"
+                                                                                : "none",
+                                                                            outline: (isHovered && !hasAllocation && !isDraggingNew && !resizingAllocation && !draggingAllocation) ? "2px solid hsl(var(--primary) / 0.6)" : "none",
                                                                             outlineOffset: "-2px",
                                                                         }}
-                                                                        className={`relative h-[38px] cursor-pointer select-none ${
+                                                                        className={`relative h-[38px] ${draggingAllocation ? "" : "cursor-pointer"} select-none ${
                                                                             isToday
                                                                                 ? "bg-primary/5"
                                                                                 : ""
-                                                                        } ${isDragPreview ? "bg-primary/10" : ""}`}
+                                                                        } ${isDragPreview ? "bg-primary/10" : ""} ${isDragMovePreview && !hasAllocation ? "bg-primary/15" : ""}`}
                                                                         onMouseEnter={() => {
                                                                             if (
-                                                                                !resizingAllocation
+                                                                                !resizingAllocation && !draggingAllocation
                                                                             ) {
                                                                                 setHoveredCell(
                                                                                     cellKey,
@@ -1601,102 +1851,43 @@ export default function CalendarGrid({
                                                                                             : project.color ||
                                                                                               "#3b82f6";
 
-                                                                                    return (
-                                                                                        <div
-                                                                                            className="absolute top-1 bottom-1 left-0 rounded flex items-center px-2 text-xs font-normal select-none pointer-events-none z-30 opacity-50 border-2 border-dashed border-white"
-                                                                                            style={{
-                                                                                                backgroundColor:
-                                                                                                    bgColor,
-                                                                                                width: `calc(${spanDays * 100}% + ${(spanDays - 1) * 1}px)`,
-                                                                                            }}
-                                                                                        >
-                                                                                            <span className="text-white whitespace-nowrap truncate px-1">
-                                                                                                {draggingAllocation.isLeave
-                                                                                                    ? "Leave"
-                                                                                                    : spanDays ===
-                                                                                                        1
-                                                                                                      ? "1d"
-                                                                                                      : spanDays ===
-                                                                                                          2
-                                                                                                        ? "2d"
-                                                                                                        : spanDays ===
-                                                                                                            3
-                                                                                                          ? `${(project.name || "").substring(0, 6)}${(project.name || "").length > 6 ? "..." : ""}`
-                                                                                                          : `${project.name || ""} - ${draggedAlloc.days_per_week}d/w`}
-                                                                                            </span>
-                                                                                        </div>
-                                                                                    );
-                                                                                }
-                                                                                return null;
-                                                                            })()}
-                                                                        {/* Render pending move allocation in new position */}
-                                                                        {pendingMove &&
-                                                                            (() => {
-                                                                                const pendingAlloc =
-                                                                                    pendingMove.allocation;
-                                                                                const duration =
-                                                                                    differenceInDays(
-                                                                                        pendingMove.newEnd,
-                                                                                        pendingMove.newStart,
-                                                                                    );
-
-                                                                                // Check if this cell is the first day of the new position
-                                                                                const isNewStart =
-                                                                                    isSameDay(
-                                                                                        day,
-                                                                                        pendingMove.newStart,
-                                                                                    );
-
-                                                                                // Check if pending move applies to this row/project
-                                                                                const appliesToThisRow =
-                                                                                    pendingMove.isLeave
-                                                                                        ? project.type ===
-                                                                                              "leave" &&
-                                                                                          pendingAlloc.user_id ===
-                                                                                              row.id
-                                                                                        : project.id ===
-                                                                                              pendingAlloc.project_id &&
-                                                                                          pendingAlloc.user_id ===
-                                                                                              row.id;
-
-                                                                                if (
-                                                                                    isNewStart &&
-                                                                                    appliesToThisRow
-                                                                                ) {
-                                                                                    const spanDays =
-                                                                                        duration +
-                                                                                        1;
-                                                                                    const bgColor =
-                                                                                        pendingMove.isLeave
-                                                                                            ? "#f97316"
-                                                                                            : project.color ||
-                                                                                              "#3b82f6";
-
-                                                                                    return (
-                                                                                        <div
-                                                                                            className="absolute top-1 bottom-1 left-0 rounded flex items-center px-2 text-xs font-normal select-none pointer-events-none z-30"
-                                                                                            style={{
-                                                                                                backgroundColor:
-                                                                                                    bgColor,
-                                                                                                width: `calc(${spanDays * 100}% + ${(spanDays - 1) * 1}px)`,
-                                                                                            }}
-                                                                                        >
-                                                                                            <span className="text-white whitespace-nowrap truncate px-1">
-                                                                                                {pendingMove.isLeave
-                                                                                                    ? "Leave"
-                                                                                                    : spanDays ===
-                                                                                                        1
-                                                                                                      ? "1d"
-                                                                                                      : spanDays ===
-                                                                                                          2
-                                                                                                        ? "2d"
-                                                                                                        : spanDays ===
-                                                                                                            3
-                                                                                                          ? `${(project.name || "").substring(0, 6)}${(project.name || "").length > 6 ? "..." : ""}`
-                                                                                                          : `${project.name || ""} - ${pendingAlloc.days_per_week}d/w`}
-                                                                                            </span>
-                                                                                        </div>
-                                                                                    );
+                                                                                    // Render preview that looks identical to actual allocation
+                                                                                    if (draggingAllocation.isLeave) {
+                                                                                        return (
+                                                                                            <div
+                                                                                                className="absolute top-1 left-1 right-1 h-[calc(100%-0.5rem)] rounded-md bg-orange-500 text-white text-xs px-1 py-1 font-medium shadow-sm flex items-center pointer-events-none z-30 opacity-80"
+                                                                                                style={{
+                                                                                                    width: `calc(${spanDays * 100}% - 0.5rem)`,
+                                                                                                }}
+                                                                                            >
+                                                                                                <span className="flex-1 text-center flex items-center justify-center gap-1 overflow-hidden">
+                                                                                                    {spanDays > 1 && <Umbrella className="h-3 w-3 flex-shrink-0" />}
+                                                                                                    <span className="truncate">Leave</span>
+                                                                                                </span>
+                                                                                            </div>
+                                                                                        );
+                                                                                    } else {
+                                                                                        const displayText = project.name || draggedAlloc.title || draggedAlloc.type;
+                                                                                        return (
+                                                                                            <div
+                                                                                                className="absolute top-1 left-1 right-1 h-[calc(100%-0.5rem)] rounded-md text-white text-xs px-2 py-1 font-medium shadow-sm flex items-center pointer-events-none z-30 opacity-80"
+                                                                                                style={{
+                                                                                                    width: `calc(${spanDays * 100}% - 0.5rem)`,
+                                                                                                    backgroundColor: bgColor,
+                                                                                                }}
+                                                                                            >
+                                                                                                <span className="flex-1 truncate px-1">
+                                                                                                    {spanDays === 1
+                                                                                                        ? "1d"
+                                                                                                        : spanDays === 2
+                                                                                                          ? "2d"
+                                                                                                          : spanDays === 3
+                                                                                                            ? `${displayText.substring(0, 6)}${displayText.length > 6 ? "..." : ""}`
+                                                                                                            : `${displayText} - ${draggedAlloc.days_per_week}d/w`}
+                                                                                                </span>
+                                                                                            </div>
+                                                                                        );
+                                                                                    }
                                                                                 }
                                                                                 return null;
                                                                             })()}
@@ -1851,8 +2042,9 @@ export default function CalendarGrid({
                                 style={{
                                     backgroundColor: "hsl(var(--card))",
                                     borderRight: "2px solid hsl(var(--border))",
-                                    width: "274px",
-                                    maxWidth: "274px",
+                                    width: "275px",
+                                    minWidth: "275px",
+                                    maxWidth: "275px",
                                 }}
                                 className="sticky left-0 z-20"
                             />
@@ -2097,4 +2289,8 @@ export default function CalendarGrid({
             )}
         </div>
     );
-}
+});
+
+CalendarGrid.displayName = 'CalendarGrid';
+
+export default CalendarGrid;

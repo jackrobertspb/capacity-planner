@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Head, Link, router, usePage } from '@inertiajs/react';
-import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, addDays, addWeeks, addMonths, subWeeks, subMonths, isSameDay, isWithinInterval, parseISO } from 'date-fns';
+import { format, startOfMonth, endOfMonth, addMonths, subMonths, isSameDay, isWithinInterval, parseISO } from 'date-fns';
 import { Plus, User, FolderPlus, X } from 'lucide-react';
 import DarkModeToggle from '@/Components/DarkModeToggle';
 import CalendarHeader from '@/Components/Calendar/CalendarHeader';
@@ -10,11 +10,11 @@ import CalendarMarkerForm from '@/Components/Calendar/CalendarMarkerForm';
 
 export default function Calendar({ startDate, endDate, users, projects, allocations, annualLeave, markers }) {
     const { auth } = usePage().props;
-    const [view, setView] = useState('month'); // 'day', 'week', 'month'
+    const view = 'month'; // Fixed to month view only
     const [viewMode, setViewMode] = useState('people'); // 'people' or 'project'
     const [sortMode, setSortMode] = useState('manual'); // 'manual' or 'name'
     const [isCompressed, setIsCompressed] = useState(false);
-    const [currentDate, setCurrentDate] = useState(parseISO(startDate));
+    const [currentDate, setCurrentDate] = useState(new Date()); // Start with today's date
     const [showAllocationForm, setShowAllocationForm] = useState(false);
     const [editingAllocation, setEditingAllocation] = useState(null);
     const [allocationDate, setAllocationDate] = useState(null);
@@ -32,54 +32,135 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
     const [newPersonLastName, setNewPersonLastName] = useState('');
     const [newPersonCapacity, setNewPersonCapacity] = useState(5);
     const [newPersonCanAccess, setNewPersonCanAccess] = useState(false);
+    const [isCreatingProject, setIsCreatingProject] = useState(false);
+    const [isCreatingPerson, setIsCreatingPerson] = useState(false);
     const addMenuRef = useRef(null);
 
-    const navigateDate = (direction) => {
-        let newDate;
-        if (view === 'day') {
-            newDate = direction === 'next' ? addDays(currentDate, 1) : addDays(currentDate, -1);
-        } else if (view === 'week') {
-            newDate = direction === 'next' ? addWeeks(currentDate, 1) : subWeeks(currentDate, 1);
-        } else {
-            newDate = direction === 'next' ? addMonths(currentDate, 1) : subMonths(currentDate, 1);
-        }
-        setCurrentDate(newDate);
-        updateCalendarRange(newDate);
-    };
+    // Infinite scroll state
+    const [loadedStartDate, setLoadedStartDate] = useState(parseISO(startDate));
+    const [loadedEndDate, setLoadedEndDate] = useState(parseISO(endDate));
+    const [isLoadingPrevious, setIsLoadingPrevious] = useState(false);
+    const [isLoadingNext, setIsLoadingNext] = useState(false);
+    const scrollContainerRef = useRef(null);
+    const lastScrollLeft = useRef(0); // Track last scroll position
+
+    // Sync loaded dates with props when they change
+    useEffect(() => {
+        setLoadedStartDate(parseISO(startDate));
+        setLoadedEndDate(parseISO(endDate));
+        // Reset scroll position tracking when date range changes
+        lastScrollLeft.current = 0;
+    }, [startDate, endDate]);
 
     const goToToday = () => {
-        const today = new Date();
-        setCurrentDate(today);
-        updateCalendarRange(today);
+        // Full page reload to calendar without any query params
+        // This ensures we get fresh data for current month only
+        window.location.href = route('calendar');
     };
 
-    const updateCalendarRange = (date) => {
-        let newStartDate, newEndDate;
-        
-        if (view === 'day') {
-            newStartDate = format(date, 'yyyy-MM-dd');
-            newEndDate = format(date, 'yyyy-MM-dd');
-        } else if (view === 'week') {
-            newStartDate = format(startOfWeek(date, { weekStartsOn: 1 }), 'yyyy-MM-dd');
-            newEndDate = format(endOfWeek(date, { weekStartsOn: 1 }), 'yyyy-MM-dd');
-        } else {
-            newStartDate = format(startOfMonth(date), 'yyyy-MM-dd');
-            newEndDate = format(endOfMonth(date), 'yyyy-MM-dd');
+    // Infinite scroll: Load previous date range
+    const loadPreviousRange = useCallback(() => {
+        if (isLoadingPrevious) return;
+        setIsLoadingPrevious(true);
+
+        // Load 30 days before current start
+        const newStartDate = format(subMonths(loadedStartDate, 1), 'yyyy-MM-dd');
+
+        // Store scroll position before fetch
+        const container = scrollContainerRef.current;
+        if (!container) {
+            setIsLoadingPrevious(false);
+            return;
         }
+        const prevScrollWidth = container.scrollWidth;
+        const prevScrollLeft = container.scrollLeft;
 
         router.get(route('calendar'), {
             start_date: newStartDate,
+            end_date: format(loadedEndDate, 'yyyy-MM-dd'),
+        }, {
+            preserveState: true,
+            preserveScroll: false,
+            onSuccess: () => {
+                // CRITICAL: Restore scroll position after prepending content
+                requestAnimationFrame(() => {
+                    if (container) {
+                        const newScrollWidth = container.scrollWidth;
+                        const addedWidth = newScrollWidth - prevScrollWidth;
+                        container.scrollLeft = prevScrollLeft + addedWidth;
+                    }
+                });
+
+                setIsLoadingPrevious(false);
+            },
+            onError: () => setIsLoadingPrevious(false),
+        });
+    }, [loadedStartDate, loadedEndDate, isLoadingPrevious]);
+
+    // Infinite scroll: Load next date range
+    const loadNextRange = useCallback(() => {
+        if (isLoadingNext) return;
+        setIsLoadingNext(true);
+
+        // Load 30 days after current end
+        const newEndDate = format(addMonths(loadedEndDate, 1), 'yyyy-MM-dd');
+
+        router.get(route('calendar'), {
+            start_date: format(loadedStartDate, 'yyyy-MM-dd'),
             end_date: newEndDate,
         }, {
             preserveState: true,
-            preserveScroll: true,
+            preserveScroll: true, // Keep scroll position when appending
+            onSuccess: () => {
+                setIsLoadingNext(false);
+            },
+            onError: () => setIsLoadingNext(false),
         });
-    };
+    }, [loadedStartDate, loadedEndDate, isLoadingNext]);
 
-    const handleViewChange = (newView) => {
-        setView(newView);
-        updateCalendarRange(currentDate);
-    };
+    // Scroll detection effect - only for month view
+    useEffect(() => {
+        const container = scrollContainerRef.current;
+        if (!container || view !== 'month') return;
+
+        let timeoutId = null;
+        const handleScroll = () => {
+            const currentScrollLeft = container.scrollLeft;
+
+            // Only trigger if scroll position actually changed (user scrolled)
+            if (Math.abs(currentScrollLeft - lastScrollLeft.current) < 5) {
+                return; // Ignore tiny movements or no movement
+            }
+
+            lastScrollLeft.current = currentScrollLeft;
+
+            if (timeoutId) clearTimeout(timeoutId);
+
+            timeoutId = setTimeout(() => {
+                const scrollLeft = container.scrollLeft;
+                const scrollWidth = container.scrollWidth;
+                const clientWidth = container.clientWidth;
+
+                const THRESHOLD = 300; // pixels from edge
+
+                // Near left edge - load previous month
+                if (scrollLeft < THRESHOLD && !isLoadingPrevious) {
+                    loadPreviousRange();
+                }
+
+                // Near right edge - load next month
+                if (scrollLeft + clientWidth > scrollWidth - THRESHOLD && !isLoadingNext) {
+                    loadNextRange();
+                }
+            }, 150);
+        };
+
+        container.addEventListener('scroll', handleScroll);
+        return () => {
+            if (timeoutId) clearTimeout(timeoutId);
+            container.removeEventListener('scroll', handleScroll);
+        };
+    }, [view, isLoadingPrevious, isLoadingNext, loadPreviousRange, loadNextRange]);
 
     const dateRange = {
         start: parseISO(startDate),
@@ -182,7 +263,7 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                         <div className="flex justify-between h-14">
                             <div className="flex items-center gap-4">
                                 <h1 className="text-base font-semibold text-foreground">
-                                    test
+                                    Capacity Planner
                                 </h1>
                                 <Link
                                     href={route('projects')}
@@ -194,12 +275,12 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                             <div className="flex items-center gap-3">
                                 <span className="text-sm font-medium text-muted-foreground">{auth.user?.name}</span>
                                 {auth.user?.role === 'admin' && (
-                                    <Link
+                                    <a
                                         href="/admin"
                                         className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors px-2.5 py-1.5 rounded hover:bg-muted/50"
                                     >
                                         Admin Panel
-                                    </Link>
+                                    </a>
                                 )}
                                 <Link
                                     href={route('profile.edit')}
@@ -262,15 +343,13 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                     <div className="flex-shrink-0 py-4">
                         <CalendarHeader
                             currentDate={currentDate}
-                            view={view}
-                            onViewChange={handleViewChange}
-                            onNavigate={navigateDate}
                             onToday={goToToday}
                         />
                     </div>
 
                     <div className="flex-1 overflow-hidden pb-4">
                         <CalendarGrid
+                                ref={scrollContainerRef}
                                 view={view}
                                 viewMode={viewMode}
                                 sortMode={sortMode}
@@ -294,6 +373,8 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                                 onViewModeChange={setViewMode}
                                 onSortModeChange={setSortMode}
                                 onToggleCompress={() => setIsCompressed(!isCompressed)}
+                                isLoadingPrevious={isLoadingPrevious}
+                                isLoadingNext={isLoadingNext}
                             />
                     </div>
                 </div>
@@ -448,8 +529,9 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                             </button>
                             <button
                                 onClick={async () => {
-                                    if (!newProjectName.trim()) return;
+                                    if (!newProjectName.trim() || isCreatingProject) return;
 
+                                    setIsCreatingProject(true);
                                     const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
 
                                     try {
@@ -470,20 +552,29 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                                         });
 
                                         if (response.ok) {
-                                            router.reload({ only: ['projects'], preserveScroll: true });
+                                            router.reload({
+                                                only: ['projects'],
+                                                preserveScroll: true,
+                                                onFinish: () => {
+                                                    setIsCreatingProject(false);
+                                                }
+                                            });
                                             setShowAddProjectModal(false);
                                             setNewProjectName('');
                                             setNewProjectStatus('to_do');
                                             setNewProjectColor('#64748b');
+                                        } else {
+                                            setIsCreatingProject(false);
                                         }
                                     } catch (error) {
                                         console.error('Error creating project:', error);
+                                        setIsCreatingProject(false);
                                     }
                                 }}
-                                disabled={!newProjectName.trim()}
-                                className="px-4 py-2 text-sm font-medium bg-primary text-white rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 cursor-pointer"
+                                disabled={!newProjectName.trim() || isCreatingProject}
+                                className="px-4 py-2 text-sm font-medium bg-primary text-white rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                             >
-                                Add new project
+                                {isCreatingProject ? 'Creating...' : 'Add new project'}
                             </button>
                         </div>
                     </div>
@@ -605,11 +696,14 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                             </button>
                             <button
                                 onClick={async () => {
-                                    if (!newPersonFirstName.trim() || !newPersonLastName.trim()) return;
+                                    if (!newPersonFirstName.trim() || !newPersonLastName.trim() || isCreatingPerson) return;
 
+                                    setIsCreatingPerson(true);
                                     console.log('🚀 Starting person creation...');
                                     const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
                                     console.log('🔑 CSRF Token:', csrfToken ? 'Found' : 'Missing');
+                                    console.log('🔑 Full CSRF Token value:', csrfToken);
+                                    console.log('🔍 CSRF meta tag element:', document.querySelector('meta[name="csrf-token"]'));
 
                                     const userData = {
                                         name: `${newPersonFirstName} ${newPersonLastName}`,
@@ -642,7 +736,12 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                                             const responseData = await response.json();
                                             console.log('✅ User created successfully:', responseData);
                                             console.log('🔄 Reloading page...');
-                                            router.reload({ preserveScroll: true });
+                                            router.reload({
+                                                preserveScroll: true,
+                                                onFinish: () => {
+                                                    setIsCreatingPerson(false);
+                                                }
+                                            });
                                             setShowAddPersonModal(false);
                                             setNewPersonFirstName('');
                                             setNewPersonLastName('');
@@ -652,16 +751,18 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                                             const errorData = await response.json();
                                             console.error('❌ Error creating person:', response.status, errorData);
                                             alert(`Failed to create person: ${errorData.message || 'Unknown error'}`);
+                                            setIsCreatingPerson(false);
                                         }
                                     } catch (error) {
                                         console.error('❌ Exception creating person:', error);
                                         alert(`Error creating person: ${error.message}`);
+                                        setIsCreatingPerson(false);
                                     }
                                 }}
-                                disabled={!newPersonFirstName.trim() || !newPersonLastName.trim()}
+                                disabled={!newPersonFirstName.trim() || !newPersonLastName.trim() || isCreatingPerson}
                                 className="px-5 py-2 text-sm font-medium bg-primary text-white rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                             >
-                                Add person
+                                {isCreatingPerson ? 'Adding...' : 'Add person'}
                             </button>
                         </div>
                     </div>

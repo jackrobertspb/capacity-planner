@@ -6,6 +6,9 @@ export default {
     "./resources/**/*.js",
     "./resources/**/*.jsx",
     "./resources/**/*.tsx",
+    "./app/Filament/**/*.php",
+    "./resources/views/filament/**/*.blade.php",
+    "./vendor/filament/**/*.blade.php",
   ],
   theme: {
     extend: {

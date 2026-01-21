@@ -9,17 +9,39 @@ class AnnualLeaveController extends Controller
 {
     public function store(Request $request)
     {
-        $validated = $request->validate([
-            'user_id' => 'required|exists:users,id',
-            'start_date' => 'required|date',
-            'end_date' => 'required|date|after_or_equal:start_date',
-            'days_count' => 'required|integer|min:1',
-            'status' => 'required|in:pending,approved,rejected',
-        ]);
+        \Log::info('=== ANNUAL LEAVE STORE DEBUG ===');
+        \Log::info('Request data:', $request->all());
+        \Log::info('Headers:', $request->headers->all());
 
-        $leave = AnnualLeave::create($validated);
+        try {
+            $validated = $request->validate([
+                'user_id' => 'required|exists:users,id',
+                'start_date' => 'required|date',
+                'end_date' => 'required|date|after_or_equal:start_date',
+                'days_count' => 'required|integer|min:1',
+                'status' => 'required|in:pending,approved,rejected',
+            ]);
 
-        return response()->json($leave, 201);
+            \Log::info('Validated data:', $validated);
+
+            $leave = AnnualLeave::create($validated);
+
+            \Log::info('Leave created successfully:', $leave->toArray());
+
+            return response()->json($leave, 201);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            \Log::error('Validation failed:', [
+                'errors' => $e->errors(),
+                'request_data' => $request->all()
+            ]);
+            throw $e;
+        } catch (\Exception $e) {
+            \Log::error('Failed to create annual leave:', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw $e;
+        }
     }
 
     public function update(Request $request, AnnualLeave $annualLeave)

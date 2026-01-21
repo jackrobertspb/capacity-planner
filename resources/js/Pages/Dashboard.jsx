@@ -30,12 +30,12 @@ export default function Dashboard() {
                                     <span className="text-sm font-semibold text-primary">{auth.user?.name}</span>
                                 </div>
                                 {auth.user?.role === 'admin' && (
-                                    <Link
+                                    <a
                                         href="/admin"
                                         className="text-sm font-medium text-foreground hover:text-primary transition-all duration-200 hover:scale-105 px-3 py-1.5 rounded-lg hover:bg-primary/10"
                                     >
                                         Admin Panel
-                                    </Link>
+                                    </a>
                                 )}
                                 <Link
                                     href={route('profile.edit')}
@@ -90,7 +90,7 @@ export default function Dashboard() {
                                 </Link>
 
                                 {auth.user?.role === 'admin' && (
-                                    <Link
+                                    <a
                                         href="/admin"
                                         className="group relative p-8 bg-gradient-to-br from-accent/10 via-accent/5 to-transparent border-2 border-accent/30 rounded-2xl hover:border-accent/60 transition-all duration-300 hover:shadow-2xl hover:scale-[1.03] overflow-hidden"
                                     >
@@ -107,7 +107,7 @@ export default function Dashboard() {
                                                 Manage employees, projects, annual leave, and calendar markers
                                             </p>
                                         </div>
-                                    </Link>
+                                    </a>
                                 )}
                             </div>
                             

@@ -22,24 +22,24 @@
   --card-foreground: 0 0% 0%;
   --popover: 0 0% 100%;
   --popover-foreground: 0 0% 0%;
-  --primary: 142 87% 40%;
+  --primary: 150 100% 41%;
   --primary-foreground: 0 0% 100%;
   --secondary: 0 0% 96%;
   --secondary-foreground: 0 0% 0%;
   --muted: 0 0% 96%;
   --muted-foreground: 0 0% 40%;
-  --accent: 142 87% 40%;
+  --accent: 150 100% 41%;
   --accent-foreground: 0 0% 100%;
   --destructive: 0 100% 50%;
   --destructive-foreground: 0 0% 100%;
   --border: 0 0% 90%;
   --input: 0 0% 90%;
-  --ring: 142 87% 40%;
-  --chart-1: 142 87% 40%;
-  --chart-2: 152 80% 45%;
-  --chart-3: 162 75% 50%;
-  --chart-4: 132 82% 38%;
-  --chart-5: 172 70% 48%;
+  --ring: 150 100% 41%;
+  --chart-1: 150 100% 41%;
+  --chart-2: 155 95% 43%;
+  --chart-3: 160 90% 45%;
+  --chart-4: 145 100% 39%;
+  --chart-5: 165 85% 47%;
 }
 
 .dark {
@@ -49,24 +49,24 @@
   --card-foreground: 0 0% 90%;
   --popover: 0 0% 16%;
   --popover-foreground: 0 0% 90%;
-  --primary: 142 87% 40%;
+  --primary: 150 100% 41%;
   --primary-foreground: 0 0% 100%;
   --secondary: 0 0% 20%;
   --secondary-foreground: 0 0% 90%;
   --muted: 0 0% 20%;
   --muted-foreground: 0 0% 55%;
-  --accent: 142 87% 40%;
+  --accent: 150 100% 41%;
   --accent-foreground: 0 0% 100%;
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
   --border: 0 0% 25%;
   --input: 0 0% 25%;
-  --ring: 142 87% 40%;
-  --chart-1: 142 87% 40%;
-  --chart-2: 152 80% 45%;
-  --chart-3: 162 75% 50%;
-  --chart-4: 132 82% 38%;
-  --chart-5: 172 70% 48%;
+  --ring: 150 100% 41%;
+  --chart-1: 150 100% 41%;
+  --chart-2: 155 95% 43%;
+  --chart-3: 160 90% 45%;
+  --chart-4: 145 100% 39%;
+  --chart-5: 165 85% 47%;
 }
 
 /* Apply background and text colors with smooth theme transitions */
@@ -271,6 +271,16 @@ body.dragging-allocation * {
   box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
 }
 
+/* Cursor pointer for all interactive elements */
+button,
+a,
+select,
+[role="button"],
+[role="link"],
+.cursor-pointer {
+  cursor: pointer;
+}
+
 /* Better focus states */
 button:focus-visible,
 a:focus-visible,
@@ -370,6 +380,26 @@ textarea:disabled {
   opacity: 0.5;
   cursor: not-allowed;
   pointer-events: none;
+}
+
+/* Override browser autofill styles */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 30px hsl(var(--background)) inset !important;
+  -webkit-text-fill-color: hsl(var(--foreground)) !important;
+  box-shadow: 0 0 0 30px hsl(var(--background)) inset !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+.dark input:-webkit-autofill,
+.dark input:-webkit-autofill:hover,
+.dark input:-webkit-autofill:focus,
+.dark input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 30px hsl(var(--background)) inset !important;
+  -webkit-text-fill-color: hsl(var(--foreground)) !important;
+  box-shadow: 0 0 0 30px hsl(var(--background)) inset !important;
 }
 
 /* Smooth page transitions */

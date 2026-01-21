@@ -5,18 +5,19 @@ export default function DarkModeToggle() {
     const [darkMode, setDarkMode] = useState(() => {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem('darkMode');
-            const isDark = saved ? JSON.parse(saved) : false;
-            
+            // Default to dark mode (true) if no saved preference
+            const isDark = saved ? JSON.parse(saved) : true;
+
             // Apply immediately on mount
             if (isDark) {
                 document.documentElement.classList.add('dark');
             } else {
                 document.documentElement.classList.remove('dark');
             }
-            
+
             return isDark;
         }
-        return false;
+        return true; // Default to dark mode
     });
 
     useEffect(() => {
