@@ -52,7 +52,7 @@ export default function AllocationForm({ allocation, users = [], projects = [], 
                 if (result.warnings && result.warnings.length > 0) {
                     setWarnings(result.warnings);
                 } else {
-                    onSave();
+                    onSave(result.allocation);
                     onClose();
                 }
             } else {

@@ -18,9 +18,12 @@ class CalendarController extends Controller
      */
     public function index(Request $request): Response
     {
-        // Default to showing current month
-        $startDate = $request->input('start_date', now()->startOfMonth()->toDateString());
-        $endDate = $request->input('end_date', now()->endOfMonth()->toDateString());
+        // Default to showing current month with full calendar grid (including padding days)
+        $defaultStart = now()->startOfMonth()->startOfWeek(\Carbon\Carbon::MONDAY)->toDateString();
+        $defaultEnd = now()->endOfMonth()->endOfWeek(\Carbon\Carbon::MONDAY)->toDateString();
+
+        $startDate = $request->input('start_date', $defaultStart);
+        $endDate = $request->input('end_date', $defaultEnd);
 
         // Get visible employees
         $users = User::where('is_visible', true)

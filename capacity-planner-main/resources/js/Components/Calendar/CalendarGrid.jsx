@@ -1,4 +1,4 @@
-import { format, eachDayOfInterval, startOfWeek, endOfWeek, startOfMonth, endOfMonth, isSameDay, isWithinInterval, parseISO, getDay, isSameMonth, differenceInDays, startOfDay } from 'date-fns';
+import { format, eachDayOfInterval, startOfWeek, endOfWeek, startOfMonth, endOfMonth, isSameDay, isWithinInterval, parseISO, getDay, isSameMonth, differenceInDays, startOfDay, addDays } from 'date-fns';
 import { useState, useEffect, useRef } from 'react';
 import { ChevronDown, ChevronRight, Plus, Search, X } from 'lucide-react';
 import AllocationBlock from '../Allocation/AllocationBlock';
@@ -6,12 +6,14 @@ import { router } from '@inertiajs/react';
 
 export default function CalendarGrid({ view, viewMode, currentDate, dateRange, users, projects, allocations, annualLeave, markers, onAddAllocation, onEditAllocation, onDeleteAllocation, onAddMarker, onEditMarker, onDeleteMarker }) {
     const rows = viewMode === 'people' ? users : projects;
-    
+
     const [hoveredCell, setHoveredCell] = useState(null);
     const [resizingAllocation, setResizingAllocation] = useState(null);
     const [resizeStartX, setResizeStartX] = useState(0);
     const [resizeStartDays, setResizeStartDays] = useState(0);
     const [resizePreviewDays, setResizePreviewDays] = useState(0);
+    const [hasScroll, setHasScroll] = useState(false);
+    const scrollContainerRef = useRef(null);
     
     // Project assignment dropdown
     const [showProjectMenu, setShowProjectMenu] = useState(null); // { rowId, x, y }
@@ -32,7 +34,7 @@ export default function CalendarGrid({ view, viewMode, currentDate, dateRange, u
     
     // Initialize all rows as expanded by default
     const [expandedRows, setExpandedRows] = useState({});
-    
+
     // Update expanded rows when rows change, expanding all by default
     useEffect(() => {
         const initialExpanded = {};
@@ -41,6 +43,20 @@ export default function CalendarGrid({ view, viewMode, currentDate, dateRange, u
         });
         setExpandedRows(initialExpanded);
     }, [users.length, projects.length, viewMode]);
+
+    // Detect if calendar has horizontal scroll
+    useEffect(() => {
+        const checkScroll = () => {
+            if (scrollContainerRef.current) {
+                const hasHorizontalScroll = scrollContainerRef.current.scrollWidth > scrollContainerRef.current.clientWidth;
+                setHasScroll(hasHorizontalScroll);
+            }
+        };
+
+        checkScroll();
+        window.addEventListener('resize', checkScroll);
+        return () => window.removeEventListener('resize', checkScroll);
+    }, [days.length, view]);
 
     const getDaysInView = () => {
         if (view === 'day') {
@@ -185,53 +201,115 @@ export default function CalendarGrid({ view, viewMode, currentDate, dateRange, u
         }));
     };
 
+    // Merge adjacent allocations that are consecutive
+    const mergeAdjacentAllocations = (allocations) => {
+        if (!allocations || allocations.length === 0) return [];
+
+        // Sort by start date
+        const sorted = [...allocations].sort((a, b) => {
+            const dateA = parseISO(a.start_date);
+            const dateB = parseISO(b.start_date);
+            return dateA - dateB;
+        });
+
+        const merged = [];
+        let current = { ...sorted[0], mergedIds: [sorted[0].id] };
+
+        for (let i = 1; i < sorted.length; i++) {
+            const next = sorted[i];
+            const currentEnd = parseISO(current.end_date);
+            const nextStart = parseISO(next.start_date);
+
+            // Check if allocations are adjacent (next starts the day after current ends)
+            const expectedNextStart = addDays(currentEnd, 1);
+            const areAdjacent = isSameDay(nextStart, expectedNextStart);
+
+            // For leave, just check if adjacent
+            // For project allocations, also check if same project/type/days_per_week
+            const canMerge = areAdjacent && (
+                (current.user_id === next.user_id) &&
+                (
+                    // For leave entries (no project_id)
+                    (!current.project_id && !next.project_id) ||
+                    // For project allocations with matching properties
+                    (current.project_id === next.project_id &&
+                     current.type === next.type &&
+                     current.days_per_week === next.days_per_week)
+                )
+            );
+
+            if (canMerge) {
+                // Extend current allocation
+                current.end_date = next.end_date;
+                current.mergedIds.push(next.id);
+            } else {
+                // Save current and start new one
+                merged.push(current);
+                current = { ...next, mergedIds: [next.id] };
+            }
+        }
+
+        // Don't forget the last one
+        merged.push(current);
+
+        return merged;
+    };
+
     const getRowProjects = (row) => {
         if (viewMode === 'people') {
             const userAllocations = allocations.filter(a => a.user_id === row.id);
             const userLeave = annualLeave.filter(l => l.user_id === row.id);
-            
+
+            // Merge adjacent leave entries
+            const mergedLeave = mergeAdjacentAllocations(userLeave);
+
             const projectMap = new Map();
-            
+
             // Always add time off (required field)
             projectMap.set('time-off', {
                 id: 'time-off',
                 name: 'Time off',
-                count: userLeave.length,
+                count: mergedLeave.length,
                 type: 'leave',
-                allocations: userLeave
+                allocations: mergedLeave
             });
 
-            // Add projects
+            // Group allocations by project/type first
+            const projectGroups = new Map();
             userAllocations.forEach(alloc => {
                 if (alloc.type === 'project' && alloc.project) {
-                    if (!projectMap.has(alloc.project_id)) {
-                        projectMap.set(alloc.project_id, {
+                    if (!projectGroups.has(alloc.project_id)) {
+                        projectGroups.set(alloc.project_id, {
                             id: alloc.project_id,
                             name: alloc.project.name,
                             color: alloc.project.color,
-                            count: 0,
                             type: 'project',
                             allocations: []
                         });
                     }
-                    const proj = projectMap.get(alloc.project_id);
-                    proj.count++;
-                    proj.allocations.push(alloc);
+                    projectGroups.get(alloc.project_id).allocations.push(alloc);
                 } else if (alloc.type !== 'project') {
                     const key = `${alloc.type}-${alloc.title}`;
-                    if (!projectMap.has(key)) {
-                        projectMap.set(key, {
+                    if (!projectGroups.has(key)) {
+                        projectGroups.set(key, {
                             id: key,
                             name: alloc.title || alloc.type,
-                            count: 0,
                             type: alloc.type,
                             allocations: []
                         });
                     }
-                    const proj = projectMap.get(key);
-                    proj.count++;
-                    proj.allocations.push(alloc);
+                    projectGroups.get(key).allocations.push(alloc);
                 }
+            });
+
+            // Merge adjacent allocations within each project group
+            projectGroups.forEach((group, key) => {
+                const merged = mergeAdjacentAllocations(group.allocations);
+                projectMap.set(key, {
+                    ...group,
+                    count: merged.length,
+                    allocations: merged
+                });
             });
 
             return Array.from(projectMap.values());
@@ -436,6 +514,9 @@ export default function CalendarGrid({ view, viewMode, currentDate, dateRange, u
         }
         
         if (isLeave) {
+            const isMerged = allocation.mergedIds && allocation.mergedIds.length > 1;
+            const mergeNote = isMerged ? ` (${allocation.mergedIds.length} merged)` : '';
+
             return (
                 <div
                     key={allocation.id}
@@ -444,7 +525,7 @@ export default function CalendarGrid({ view, viewMode, currentDate, dateRange, u
                         width: `calc(${daysToSpan * 100}% - 0.5rem)`,
                         transition: isBeingResized ? 'none' : 'width 0.1s ease-out'
                     }}
-                    title={`Leave: ${format(startDate, 'MMM d')} - ${format(endDate, 'MMM d')}`}
+                    title={`Leave: ${format(startDate, 'MMM d')} - ${format(endDate, 'MMM d')}${mergeNote}`}
                 >
                     <div
                         className="absolute left-0 top-0 bottom-0 w-6 cursor-ew-resize opacity-0 group-hover/alloc:opacity-100 hover:bg-white/30 transition-opacity"
@@ -461,7 +542,9 @@ export default function CalendarGrid({ view, viewMode, currentDate, dateRange, u
 
         const displayText = allocation.project?.name || allocation.title || allocation.type;
         const bgColor = allocation.project?.color || '#8b5cf6';
-        
+        const isMerged = allocation.mergedIds && allocation.mergedIds.length > 1;
+        const mergeNote = isMerged ? ` (${allocation.mergedIds.length} merged)` : '';
+
         return (
             <div
                 key={allocation.id}
@@ -477,7 +560,7 @@ export default function CalendarGrid({ view, viewMode, currentDate, dateRange, u
                         onEditAllocation(allocation);
                     }
                 }}
-                title={`${displayText}: ${format(startDate, 'MMM d')} - ${format(endDate, 'MMM d')} (${allocation.days_per_week} days/week)`}
+                title={`${displayText}: ${format(startDate, 'MMM d')} - ${format(endDate, 'MMM d')} (${allocation.days_per_week} days/week)${mergeNote}`}
             >
                 <div
                     className="absolute left-0 top-0 bottom-0 w-6 cursor-ew-resize opacity-0 group-hover/alloc:opacity-100 hover:bg-white/30 transition-opacity"
@@ -493,8 +576,11 @@ export default function CalendarGrid({ view, viewMode, currentDate, dateRange, u
     };
 
     return (
-        <div className="overflow-x-auto custom-scrollbar">
-            <table className="w-full" style={{ borderSpacing: 0, border: '1px solid hsl(var(--border))' }}>
+        <div
+            ref={scrollContainerRef}
+            className={`overflow-x-auto custom-scrollbar calendar-scroll-container ${hasScroll ? 'has-scroll' : ''}`}
+        >
+            <table className="w-full" style={{ borderSpacing: 0, border: '1px solid hsl(var(--border))', minWidth: 'max-content' }}>
                 {/* Month headers */}
                 <thead>
                     <tr>

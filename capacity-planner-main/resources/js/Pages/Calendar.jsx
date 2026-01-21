@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Head, Link, router, usePage } from '@inertiajs/react';
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, addDays, addWeeks, addMonths, subWeeks, subMonths, isSameDay, isWithinInterval, parseISO } from 'date-fns';
 import DarkModeToggle from '@/Components/DarkModeToggle';
@@ -7,11 +7,12 @@ import CalendarGrid from '@/Components/Calendar/CalendarGrid';
 import AllocationForm from '@/Components/Allocation/AllocationForm';
 import CalendarMarkerForm from '@/Components/Calendar/CalendarMarkerForm';
 
-export default function Calendar({ startDate, endDate, users, projects, allocations, annualLeave, markers }) {
+export default function Calendar({ startDate, endDate, users, projects, allocations: serverAllocations, annualLeave, markers }) {
     const { auth } = usePage().props;
     const [view, setView] = useState('month'); // 'day', 'week', 'month'
     const [viewMode, setViewMode] = useState('people'); // 'people' or 'project'
     const [currentDate, setCurrentDate] = useState(parseISO(startDate));
+    const [allocations, setAllocations] = useState(serverAllocations);
     const [showAllocationForm, setShowAllocationForm] = useState(false);
     const [editingAllocation, setEditingAllocation] = useState(null);
     const [allocationDate, setAllocationDate] = useState(null);
@@ -19,6 +20,11 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
     const [showMarkerForm, setShowMarkerForm] = useState(false);
     const [editingMarker, setEditingMarker] = useState(null);
     const [markerDate, setMarkerDate] = useState(null);
+
+    // Sync allocations when server data changes (e.g., navigation, external updates)
+    useEffect(() => {
+        setAllocations(serverAllocations);
+    }, [serverAllocations]);
 
     const navigateDate = (direction) => {
         let newDate;
@@ -66,18 +72,25 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
         }
     };
 
-    const updateCalendarRange = (date) => {
+    const updateCalendarRange = (date, viewType = null) => {
+        // Use provided viewType or fall back to current view state
+        const effectiveView = viewType || view;
         let newStartDate, newEndDate;
-        
-        if (view === 'day') {
+
+        if (effectiveView === 'day') {
             newStartDate = format(date, 'yyyy-MM-dd');
             newEndDate = format(date, 'yyyy-MM-dd');
-        } else if (view === 'week') {
+        } else if (effectiveView === 'week') {
             newStartDate = format(startOfWeek(date, { weekStartsOn: 1 }), 'yyyy-MM-dd');
             newEndDate = format(endOfWeek(date, { weekStartsOn: 1 }), 'yyyy-MM-dd');
         } else {
-            newStartDate = format(startOfMonth(date), 'yyyy-MM-dd');
-            newEndDate = format(endOfMonth(date), 'yyyy-MM-dd');
+            // For month view, get the full calendar grid including padding days
+            const monthStart = startOfMonth(date);
+            const monthEnd = endOfMonth(date);
+            const weekStart = startOfWeek(monthStart, { weekStartsOn: 1 });
+            const weekEnd = endOfWeek(monthEnd, { weekStartsOn: 1 });
+            newStartDate = format(weekStart, 'yyyy-MM-dd');
+            newEndDate = format(weekEnd, 'yyyy-MM-dd');
         }
 
         router.get(route('calendar'), {
@@ -91,7 +104,7 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
 
     const handleViewChange = (newView) => {
         setView(newView);
-        updateCalendarRange(currentDate);
+        updateCalendarRange(currentDate, newView);
     };
 
     const dateRange = {
@@ -138,8 +151,22 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
         }
     };
 
-    const handleSaveAllocation = () => {
-        router.reload({ only: ['allocations'] });
+    const handleSaveAllocation = (newAllocation) => {
+        if (newAllocation) {
+            // Optimistically update the UI immediately
+            if (editingAllocation?.id) {
+                // Update existing allocation
+                setAllocations(prev => prev.map(a =>
+                    a.id === newAllocation.id ? newAllocation : a
+                ));
+            } else {
+                // Add new allocation
+                setAllocations(prev => [...prev, newAllocation]);
+            }
+        }
+
+        // Refresh in background to ensure consistency
+        router.reload({ only: ['allocations'], preserveScroll: true });
     };
 
     const handleAddMarker = (date) => {
@@ -181,7 +208,7 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                         <div className="flex justify-between h-16">
                             <div className="flex items-center gap-6">
                                 <h1 className="text-xl font-bold text-primary">
-                                    Capacity Planner
+                                    🚀 CAPACITY PLANNER - TEST UPDATE WORKING! 🚀
                                 </h1>
                                 <Link
                                     href={route('dashboard')}

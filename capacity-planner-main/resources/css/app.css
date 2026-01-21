@@ -194,3 +194,32 @@ body.resizing-allocation,
 body.resizing-allocation * {
   cursor: ew-resize !important;
 }
+
+/* Scroll shadow indicators for calendar - using box-shadow only (no gradients) */
+.calendar-scroll-container {
+  position: relative;
+}
+
+.calendar-scroll-container::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 2px;
+  background: hsl(var(--primary) / 0.3);
+  pointer-events: none;
+  z-index: 30;
+  opacity: 0;
+  transition: opacity 0.3s;
+  box-shadow: 0 0 20px 10px hsl(var(--primary) / 0.15);
+}
+
+.calendar-scroll-container.has-scroll::after {
+  opacity: 1;
+}
+
+.dark .calendar-scroll-container::after {
+  background: hsl(var(--primary) / 0.4);
+  box-shadow: 0 0 20px 10px hsl(var(--primary) / 0.2);
+}

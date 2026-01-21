@@ -7,7 +7,14 @@
       "Bash(test:*)",
       "Bash(npm install)",
       "Bash(npm run build:*)",
-      "Bash(timeout:*)"
+      "Bash(timeout:*)",
+      "Bash(curl:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(dir /s /b tailwind.config.js)",
+      "Bash(Test-Path \"resources\\\\css\\\\filament\\\\admin\\\\tailwind.config.js\")",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }
