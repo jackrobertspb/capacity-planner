@@ -48,6 +48,9 @@ const CalendarGrid = forwardRef(({
     onAddMarker,
     onEditMarker,
     onDeleteMarker,
+    onOptimisticAllocation,
+    onOptimisticLeave,
+    onRemoveOptimisticLeave,
     onAddProject,
     onAddPerson,
     auth,
@@ -126,6 +129,8 @@ const CalendarGrid = forwardRef(({
     const [dragRowId, setDragRowId] = useState(null);
     const [dragProjectId, setDragProjectId] = useState(null);
     const isProcessingDrag = useRef(false); // Prevent multiple simultaneous creations
+    const pendingClickRef = useRef(null); // Track pending click for drag detection
+    const hasMovedForDrag = useRef(false); // Track if mouse moved enough to be a drag
 
     // Drag-to-move existing allocation state
     const [draggingAllocation, setDraggingAllocation] = useState(null);
@@ -425,8 +430,13 @@ const CalendarGrid = forwardRef(({
 
     const handleDragNewStart = (day, rowId, projectId) => {
         // Prevent starting a new drag if one is already in progress or processing
-        if (isDraggingNew || isProcessingDrag.current) return;
+        if (isDraggingNew || isProcessingDrag.current || pendingClickRef.current) return;
 
+        // Store pending click info - we'll decide if it's a click or drag on mouseup/mousemove
+        pendingClickRef.current = { day, rowId, projectId };
+        hasMovedForDrag.current = false;
+
+        // Set drag state for visual preview while mouse is down
         setIsDraggingNew(true);
         setDragStart(day);
         setDragEnd(day);
@@ -437,6 +447,10 @@ const CalendarGrid = forwardRef(({
     const handleDragNewMove = (day) => {
         // Only update drag end if we're actually dragging
         if (isDraggingNew && dragStart) {
+            // If user moved to a different day, this is now a real drag
+            if (day.getTime() !== dragStart.getTime()) {
+                hasMovedForDrag.current = true;
+            }
             setDragEnd(day);
         }
     };
@@ -482,14 +496,69 @@ const CalendarGrid = forwardRef(({
                     status: "approved",
                 };
 
-                console.log("=== TIME OFF CREATION DEBUG ===");
-                console.log("CSRF Token:", csrfToken);
-                console.log("Payload:", payload);
-                console.log("Start Day:", startDay);
-                console.log("End Day:", endDay);
-                console.log("Days Count:", daysCount);
+                // Create a temporary optimistic entry IMMEDIATELY (before API call)
+                const tempId = `temp-leave-${Date.now()}`;
+                const optimisticEntry = {
+                    id: tempId,
+                    user_id: dragRowId,
+                    start_date: format(startDay, "yyyy-MM-dd"),
+                    end_date: format(endDay, "yyyy-MM-dd"),
+                    days_count: daysCount,
+                    status: "approved",
+                    _isTemporary: true,
+                };
 
-                const response = await fetch("/annual-leave", {
+                // Show the block immediately - this is the key to no flicker
+                if (onOptimisticLeave) {
+                    onOptimisticLeave(optimisticEntry);
+                }
+                isProcessingDrag.current = false;
+
+                // Make API call in background - fire and forget for UI purposes
+                // The optimistic entry stays visible; we only remove it on error
+                fetch("/annual-leave", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-Requested-With": "XMLHttpRequest",
+                        Accept: "application/json",
+                        "X-CSRF-TOKEN": csrfToken,
+                    },
+                    body: JSON.stringify(payload),
+                }).then(async (response) => {
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        console.error("❌ [TimeOff] Failed to create leave:", errorData);
+                        // Remove the optimistic entry on error
+                        if (onRemoveOptimisticLeave) {
+                            onRemoveOptimisticLeave(tempId);
+                        }
+                        alert("Failed to create time off. Please try again.");
+                    }
+                    // On success: do nothing - optimistic entry stays visible
+                }).catch((error) => {
+                    console.error("❌ [TimeOff] Exception:", error);
+                    // Remove the optimistic entry on error
+                    if (onRemoveOptimisticLeave) {
+                        onRemoveOptimisticLeave(tempId);
+                    }
+                    alert("Failed to create time off. Please try again.");
+                });
+            } else {
+                // Handle project allocation
+                const payload = {
+                    user_id: dragRowId,
+                    project_id: dragProjectId,
+                    type: "project",
+                    start_date: format(startDay, "yyyy-MM-dd"),
+                    end_date: format(endDay, "yyyy-MM-dd"),
+                    days_per_week: 5.0,
+                };
+
+                console.log("=== ALLOCATION DRAG-DROP DEBUG ===");
+                console.log("🔵 [DragAlloc] Payload:", payload);
+
+                const response = await fetch("/allocations", {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
@@ -500,83 +569,176 @@ const CalendarGrid = forwardRef(({
                     body: JSON.stringify(payload),
                 });
 
-                console.log("Response Status:", response.status);
-                console.log("Response OK:", response.ok);
+                console.log("🔵 [DragAlloc] Response Status:", response.status);
+                console.log("🔵 [DragAlloc] Response OK:", response.ok);
 
                 if (response.ok) {
                     const responseData = await response.json();
-                    console.log("Success Response:", responseData);
-                    router.reload({
-                        only: ["allocations", "annualLeave"],
-                        preserveScroll: true,
-                        onSuccess: () => {
-                            isProcessingDrag.current = false;
-                        },
-                    });
+                    console.log("✅ [DragAlloc] Success Response:", responseData);
+
+                    // Add optimistic allocation immediately - no reload needed
+                    if (onOptimisticAllocation && responseData) {
+                        console.log("✨ [DragAlloc] Adding optimistic allocation (no reload)");
+                        onOptimisticAllocation(responseData);
+                    }
+
+                    // No reload needed - optimistic update handles UI immediately
+                    console.log("🟢 [DragAlloc] Allocation created, visible via optimistic state");
+                    isProcessingDrag.current = false;
                 } else {
                     const errorData = await response.json();
-                    console.error("Failed to create leave:", errorData);
-                    console.error("Error response full details:", {
+                    console.error("❌ [DragAlloc] Failed to create allocation:", errorData);
+                    console.error("❌ [DragAlloc] Error response full details:", {
                         status: response.status,
                         statusText: response.statusText,
-                        headers: Object.fromEntries(response.headers.entries()),
                         body: errorData
                     });
-                    alert("Failed to create time off. Please try again.");
-                    isProcessingDrag.current = false;
-                }
-            } else {
-                // Handle project allocation
-                const response = await fetch("/allocations", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "X-Requested-With": "XMLHttpRequest",
-                        Accept: "application/json",
-                        "X-CSRF-TOKEN": csrfToken,
-                    },
-                    body: JSON.stringify({
-                        user_id: dragRowId,
-                        project_id: dragProjectId,
-                        type: "project",
-                        start_date: format(startDay, "yyyy-MM-dd"),
-                        end_date: format(endDay, "yyyy-MM-dd"),
-                        days_per_week: 5.0,
-                    }),
-                });
-
-                if (response.ok) {
-                    router.reload({
-                        only: ["allocations", "annualLeave"],
-                        preserveScroll: true,
-                        onSuccess: () => {
-                            isProcessingDrag.current = false;
-                        },
-                    });
-                } else {
-                    const errorData = await response.json();
-                    console.error("Failed to create allocation:", errorData);
                     alert("Failed to create allocation. Please try again.");
                     isProcessingDrag.current = false;
                 }
             }
         } catch (error) {
-            console.error("Error:", error);
+            console.error("❌ [DragDrop] Caught exception:", error);
             alert("Failed to create entry. Please try again.");
             isProcessingDrag.current = false;
         }
     };
 
-    // Listen for mouseup to end drag
+    // Listen for mouseup to end drag/click
     useEffect(() => {
-        if (isDraggingNew) {
+        if (isDraggingNew && dragStart && dragEnd && dragRowId && dragProjectId) {
             const handleMouseUp = () => {
-                handleDragNewEnd();
+                // Clear pending click ref
+                pendingClickRef.current = null;
+
+                // Capture current values to avoid stale closure issues
+                const currentDragStart = dragStart;
+                const currentDragEnd = dragEnd;
+                const currentDragRowId = dragRowId;
+                const currentDragProjectId = dragProjectId;
+                const wasDrag = hasMovedForDrag.current;
+
+                // Reset drag tracking
+                hasMovedForDrag.current = false;
+
+                // Prevent multiple submissions
+                if (isProcessingDrag.current) return;
+                isProcessingDrag.current = true;
+
+                const startDay = currentDragStart < currentDragEnd ? currentDragStart : currentDragEnd;
+                const endDay = currentDragStart < currentDragEnd ? currentDragEnd : currentDragStart;
+                const daysCount = differenceInDays(endDay, startDay) + 1;
+
+                // Clear drag state immediately
+                setIsDraggingNew(false);
+                setDragStart(null);
+                setDragEnd(null);
+                setDragRowId(null);
+                setDragProjectId(null);
+
+                // Handle time-off (annual leave)
+                if (currentDragProjectId === "time-off") {
+                    // Create optimistic entry IMMEDIATELY - this runs synchronously
+                    const tempId = `temp-leave-${Date.now()}`;
+                    const optimisticEntry = {
+                        id: tempId,
+                        user_id: currentDragRowId,
+                        start_date: format(startDay, "yyyy-MM-dd"),
+                        end_date: format(endDay, "yyyy-MM-dd"),
+                        days_count: daysCount,
+                        status: "approved",
+                        _isTemporary: true,
+                    };
+
+                    // Show block immediately
+                    if (onOptimisticLeave) {
+                        onOptimisticLeave(optimisticEntry);
+                    }
+
+                    isProcessingDrag.current = false;
+
+                    // Fire API call in background
+                    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || "";
+                    fetch("/annual-leave", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-Requested-With": "XMLHttpRequest",
+                            Accept: "application/json",
+                            "X-CSRF-TOKEN": csrfToken,
+                        },
+                        body: JSON.stringify({
+                            user_id: currentDragRowId,
+                            start_date: format(startDay, "yyyy-MM-dd"),
+                            end_date: format(endDay, "yyyy-MM-dd"),
+                            days_count: daysCount,
+                            status: "approved",
+                        }),
+                    }).then(async (response) => {
+                        if (!response.ok) {
+                            if (onRemoveOptimisticLeave) {
+                                onRemoveOptimisticLeave(tempId);
+                            }
+                            alert("Failed to create time off. Please try again.");
+                        }
+                    }).catch(() => {
+                        if (onRemoveOptimisticLeave) {
+                            onRemoveOptimisticLeave(tempId);
+                        }
+                        alert("Failed to create time off. Please try again.");
+                    });
+                } else {
+                    // Handle project allocation inline (can't call handleDragNewEnd since state is already cleared)
+                    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || "";
+                    const payload = {
+                        user_id: currentDragRowId,
+                        project_id: currentDragProjectId,
+                        type: "project",
+                        start_date: format(startDay, "yyyy-MM-dd"),
+                        end_date: format(endDay, "yyyy-MM-dd"),
+                        days_per_week: 5.0,
+                    };
+
+                    console.log("=== ALLOCATION DRAG-DROP DEBUG (mouseup handler) ===");
+                    console.log("🔵 [DragAlloc] Payload:", payload);
+
+                    fetch("/allocations", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-Requested-With": "XMLHttpRequest",
+                            Accept: "application/json",
+                            "X-CSRF-TOKEN": csrfToken,
+                        },
+                        body: JSON.stringify(payload),
+                    }).then(async (response) => {
+                        console.log("🔵 [DragAlloc] Response Status:", response.status);
+                        if (response.ok) {
+                            const responseData = await response.json();
+                            console.log("✅ [DragAlloc] Success Response:", responseData);
+                            // Backend returns { allocation: {...}, warnings: [...] }
+                            const allocation = responseData.allocation || responseData;
+                            if (onOptimisticAllocation && allocation) {
+                                console.log("✨ [DragAlloc] Adding optimistic allocation");
+                                onOptimisticAllocation(allocation);
+                            }
+                        } else {
+                            const errorData = await response.json();
+                            console.error("❌ [DragAlloc] Failed:", errorData);
+                            alert("Failed to create allocation. Please try again.");
+                        }
+                        isProcessingDrag.current = false;
+                    }).catch((error) => {
+                        console.error("❌ [DragAlloc] Exception:", error);
+                        alert("Failed to create allocation. Please try again.");
+                        isProcessingDrag.current = false;
+                    });
+                }
             };
             window.addEventListener("mouseup", handleMouseUp, { once: true });
             return () => window.removeEventListener("mouseup", handleMouseUp);
         }
-    }, [isDraggingNew, dragStart, dragEnd, dragRowId, dragProjectId]);
+    }, [isDraggingNew, dragStart, dragEnd, dragRowId, dragProjectId, onOptimisticLeave, onRemoveOptimisticLeave, onOptimisticAllocation]);
 
     // Close project menu on Escape key
     useEffect(() => {
@@ -811,27 +973,24 @@ const CalendarGrid = forwardRef(({
                         );
 
                         if (response.ok) {
-                            console.log("Leave updated successfully");
-                            console.log("Reloading page data...");
+                            const responseData = await response.json();
+                            console.log("✅ [DragMove] Leave updated successfully", responseData);
 
-                            // Force a full page data reload without cache
-                            router.visit(window.location.href, {
-                                only: ["allocations", "annualLeave"],
-                                preserveScroll: true,
-                                preserveState: true,
-                                replace: true,
-                                onFinish: () => {
-                                    console.log("Reload completed");
-                                    // Clear dragging state only after data is reloaded
-                                    setDraggingAllocation(null);
-                                    setDragOffset(0);
-                                    setDragPreviewStart(null);
-                                    setDragOriginalStartDate(null);
-                                    setDragGrabOffset(0);
-                                    dragStartPos.current = null;
-                                    hasMoved.current = false;
-                                },
-                            });
+                            // Update via optimistic state - no reload needed
+                            if (onOptimisticLeave && responseData) {
+                                console.log("✨ [DragMove] Updating leave in optimistic state");
+                                onOptimisticLeave(responseData);
+                            }
+
+                            // Clear dragging state immediately
+                            setDraggingAllocation(null);
+                            setDragOffset(0);
+                            setDragPreviewStart(null);
+                            setDragOriginalStartDate(null);
+                            setDragGrabOffset(0);
+                            dragStartPos.current = null;
+                            hasMoved.current = false;
+                            console.log("🟢 [DragMove] Drag complete, no reload needed");
                         } else {
                             const errorData = await response.json();
                             console.error("Failed to move leave:", errorData);
@@ -880,30 +1039,23 @@ const CalendarGrid = forwardRef(({
 
                         if (response.ok) {
                             const responseData = await response.json();
-                            console.log(
-                                "Allocation updated successfully:",
-                                responseData,
-                            );
-                            console.log("Reloading page data...");
+                            console.log("✅ [DragMove] Allocation updated successfully:", responseData);
 
-                            // Force a full page data reload without cache
-                            router.visit(window.location.href, {
-                                only: ["allocations", "annualLeave"],
-                                preserveScroll: true,
-                                preserveState: true,
-                                replace: true,
-                                onFinish: () => {
-                                    console.log("Reload completed");
-                                    // Clear dragging state only after data is reloaded
-                                    setDraggingAllocation(null);
-                                    setDragOffset(0);
-                                    setDragPreviewStart(null);
-                                    setDragOriginalStartDate(null);
-                                    setDragGrabOffset(0);
-                                    dragStartPos.current = null;
-                                    hasMoved.current = false;
-                                },
-                            });
+                            // Update via optimistic state - no reload needed
+                            if (onOptimisticAllocation && responseData) {
+                                console.log("✨ [DragMove] Updating allocation in optimistic state");
+                                onOptimisticAllocation(responseData);
+                            }
+
+                            // Clear dragging state immediately
+                            setDraggingAllocation(null);
+                            setDragOffset(0);
+                            setDragPreviewStart(null);
+                            setDragOriginalStartDate(null);
+                            setDragGrabOffset(0);
+                            dragStartPos.current = null;
+                            hasMoved.current = false;
+                            console.log("🟢 [DragMove] Drag complete, no reload needed");
                         } else {
                             const errorData = await response
                                 .json()
@@ -962,11 +1114,76 @@ const CalendarGrid = forwardRef(({
         }
     }, [isActivelyDragging, draggingAllocation, dragOffset, dragPreviewStart, dragGrabOffset, days]);
 
+    // Helper function to merge adjacent allocations with the same project (or adjacent leave)
+    const getMergedAllocationSpan = (allocation, allAllocations, isLeave = false) => {
+        // Sort allocations by start date
+        const sortedAllocations = [...allAllocations]
+            .filter(a => {
+                if (isLeave) {
+                    // For leave, merge all leave records (they're already grouped by user)
+                    return true;
+                } else if (allocation.type === 'project') {
+                    return a.project_id === allocation.project_id && a.type === 'project';
+                } else {
+                    // For SLA/misc, match by type and title
+                    return a.type === allocation.type && a.title === allocation.title;
+                }
+            })
+            .sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
+
+        if (sortedAllocations.length <= 1) {
+            return null; // No merging needed
+        }
+
+        // Find the continuous sequence this allocation belongs to
+        let mergedStart = parseISO(allocation.start_date);
+        let mergedEnd = parseISO(allocation.end_date);
+        let changed = true;
+
+        // Keep expanding the range until no more adjacent allocations are found
+        while (changed) {
+            changed = false;
+            for (const otherAlloc of sortedAllocations) {
+                if (otherAlloc.id === allocation.id) continue; // Skip self
+
+                const otherStart = parseISO(otherAlloc.start_date);
+                const otherEnd = parseISO(otherAlloc.end_date);
+
+                // Check if this allocation is adjacent to our merged range
+                // Adjacent means: end of one is the day before start of the other, OR they overlap
+                const dayAfterOtherEnd = addDays(otherEnd, 1);
+                const dayAfterMergedEnd = addDays(mergedEnd, 1);
+
+                const isAdjacent =
+                    isSameDay(dayAfterOtherEnd, mergedStart) ||  // other ends day before merged starts
+                    isSameDay(dayAfterMergedEnd, otherStart) ||  // merged ends day before other starts
+                    (otherStart <= mergedEnd && otherEnd >= mergedStart); // overlapping
+
+                if (isAdjacent) {
+                    const oldStart = mergedStart;
+                    const oldEnd = mergedEnd;
+
+                    // Extend the merged range
+                    if (otherStart < mergedStart) mergedStart = otherStart;
+                    if (otherEnd > mergedEnd) mergedEnd = otherEnd;
+
+                    // Check if we actually changed anything
+                    if (!isSameDay(oldStart, mergedStart) || !isSameDay(oldEnd, mergedEnd)) {
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        return { start: mergedStart, end: mergedEnd };
+    };
+
     const renderAllocationBlock = (
         allocation,
         firstDay,
         isLeave = false,
         allocIndex = 0,
+        allAllocations = [],
     ) => {
         // Strict check for dragging state
         const isThisBeingDragged =
@@ -975,12 +1192,27 @@ const CalendarGrid = forwardRef(({
             draggingAllocation.isLeave === isLeave &&
             allocation.start_date === dragOriginalStartDate; // Only apply preview if data hasn't updated
 
-        const startDate = startOfDay(
+        let startDate = startOfDay(
             parseISO(isLeave ? allocation.start_date : allocation.start_date),
         );
-        const endDate = startOfDay(
+        let endDate = startOfDay(
             parseISO(isLeave ? allocation.end_date : allocation.end_date),
         );
+
+        // Try to merge with adjacent allocations (for both allocations and leave)
+        const mergedSpan = getMergedAllocationSpan(allocation, allAllocations, isLeave);
+        if (mergedSpan) {
+            // Check if THIS allocation is the first one in the merged sequence
+            // Only render from the earliest allocation's start date
+            const isFirstInSequence = isSameDay(startDate, mergedSpan.start);
+            if (!isFirstInSequence) {
+                return null; // Don't render - will be rendered from the first allocation
+            }
+            // Use the merged span for rendering
+            startDate = mergedSpan.start;
+            endDate = mergedSpan.end;
+        }
+
         const firstDayDate = startOfDay(firstDay);
 
         // Check if this allocation starts on this day
@@ -1779,6 +2011,7 @@ const CalendarGrid = forwardRef(({
                                                                                         day,
                                                                                         true,
                                                                                         allocIndex,
+                                                                                        project.allocations,
                                                                                     );
                                                                                 } else {
                                                                                     return renderAllocationBlock(
@@ -1786,6 +2019,7 @@ const CalendarGrid = forwardRef(({
                                                                                         day,
                                                                                         false,
                                                                                         allocIndex,
+                                                                                        project.allocations,
                                                                                     );
                                                                                 }
                                                                             },
