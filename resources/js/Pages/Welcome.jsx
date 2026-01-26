@@ -29,14 +29,6 @@ export default function Welcome() {
                                         >
                                             Calendar
                                         </Link>
-                                        {auth.user.role === 'admin' && (
-                                            <Link
-                                                href="/admin"
-                                                className="text-sm font-medium text-foreground hover:text-primary transition-colors"
-                                            >
-                                                Admin
-                                            </Link>
-                                        )}
                                     </>
                                 ) : (
                                     <>
@@ -116,10 +108,6 @@ export default function Welcome() {
                                     <li className="flex items-start">
                                         <span className="text-primary mr-2 font-bold">✓</span>
                                         <span className="text-muted-foreground">Additional dependencies (date-fns, dnd-kit, Radix UI)</span>
-                                    </li>
-                                    <li className="flex items-start">
-                                        <span className="text-primary mr-2 font-bold">✓</span>
-                                        <span className="text-muted-foreground">Filament admin panel installed and configured</span>
                                     </li>
                                 </ul>
                             </div>

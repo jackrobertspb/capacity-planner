@@ -39,8 +39,10 @@ export default function CalendarMarkerForm({ marker, date, onClose, onSave }) {
             const result = await response.json();
 
             if (response.ok) {
+                // Only trigger onSave - let parent handle closing after reload completes
+                // Keep form open with "Saving..." state during reload
                 onSave();
-                onClose();
+                // Don't set processing to false - keep "Saving..." until reload completes
             } else {
                 if (result.errors) {
                     setErrors(result.errors);
@@ -51,9 +53,10 @@ export default function CalendarMarkerForm({ marker, date, onClose, onSave }) {
         } catch (error) {
             console.error('Error saving marker:', error);
             setErrors({ general: ['An error occurred while saving the marker.'] });
-        } finally {
             setProcessing(false);
         }
+        // Note: Don't set processing=false in finally block for successful saves
+        // Keep "Saving..." state until reload completes
     };
 
     return (

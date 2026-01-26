@@ -23,18 +23,21 @@ export default function AllocationForm({ allocation, users = [], projects = [], 
 
     const submit = async (e) => {
         e.preventDefault();
+        console.log('🔵 [AllocationForm] Submit started');
         setProcessing(true);
         setErrors({});
         setWarnings([]);
 
         try {
-            const url = allocation 
+            const url = allocation
                 ? `/allocations/${allocation.id}`
                 : '/allocations';
-            
+
             const method = allocation ? 'PUT' : 'POST';
-            
+
             const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+            console.log('🔵 [AllocationForm] Sending request to:', url, 'Method:', method);
+
             const response = await fetch(url, {
                 method: method,
                 headers: {
@@ -46,28 +49,40 @@ export default function AllocationForm({ allocation, users = [], projects = [], 
                 body: JSON.stringify(formData),
             });
 
+            console.log('🔵 [AllocationForm] Response received:', response.status);
             const result = await response.json();
+            console.log('🔵 [AllocationForm] Response data:', result);
 
             if (response.ok) {
                 if (result.warnings && result.warnings.length > 0) {
+                    console.log('⚠️ [AllocationForm] Warnings found, keeping form open');
                     setWarnings(result.warnings);
+                    setProcessing(false);
                 } else {
-                    onSave();
-                    onClose();
+                    console.log('✅ [AllocationForm] Success! Calling onSave()');
+                    // Pass the saved allocation data and whether it was an edit
+                    // Check if it's a real edit (has allocation without _isTemporary flag)
+                    const isEdit = !!allocation && !allocation._isTemporary;
+                    console.log('🔍 [AllocationForm] isEdit check:', { hasAllocation: !!allocation, isTemporary: allocation?._isTemporary, isEdit });
+                    onSave(result, isEdit);
+                    // Form will close immediately now - no need to keep processing state
                 }
             } else {
+                console.log('❌ [AllocationForm] Request failed');
                 if (result.errors) {
                     setErrors(result.errors);
                 } else if (result.message) {
                     setErrors({ general: [result.message] });
                 }
+                setProcessing(false);
             }
         } catch (error) {
-            console.error('Error saving allocation:', error);
+            console.error('❌ [AllocationForm] Error saving allocation:', error);
             setErrors({ general: ['An error occurred while saving the allocation.'] });
-        } finally {
             setProcessing(false);
         }
+        // Note: Don't set processing=false in finally block - we want to keep
+        // "Saving..." state until reload completes for successful saves
     };
 
     return (

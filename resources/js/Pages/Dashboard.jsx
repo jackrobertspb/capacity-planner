@@ -1,6 +1,6 @@
 import { Head, Link, usePage } from '@inertiajs/react';
 import DarkModeToggle from '@/Components/DarkModeToggle';
-import { BarChart3, Calendar, Settings, User } from 'lucide-react';
+import { BarChart3, Calendar, User } from 'lucide-react';
 
 export default function Dashboard() {
     const { auth } = usePage().props;
@@ -29,14 +29,6 @@ export default function Dashboard() {
                                 <div className="px-3 py-1.5 bg-gradient-to-r from-primary/10 to-transparent rounded-lg border border-primary/20">
                                     <span className="text-sm font-semibold text-primary">{auth.user?.name}</span>
                                 </div>
-                                {auth.user?.role === 'admin' && (
-                                    <a
-                                        href="/admin"
-                                        className="text-sm font-medium text-foreground hover:text-primary transition-all duration-200 hover:scale-105 px-3 py-1.5 rounded-lg hover:bg-primary/10"
-                                    >
-                                        Admin Panel
-                                    </a>
-                                )}
                                 <Link
                                     href={route('profile.edit')}
                                     className="text-sm font-medium text-muted-foreground hover:text-foreground transition-all duration-200 hover:scale-105 px-3 py-1.5 rounded-lg hover:bg-muted"
@@ -88,27 +80,6 @@ export default function Dashboard() {
                                         </p>
                                     </div>
                                 </Link>
-
-                                {auth.user?.role === 'admin' && (
-                                    <a
-                                        href="/admin"
-                                        className="group relative p-8 bg-gradient-to-br from-accent/10 via-accent/5 to-transparent border-2 border-accent/30 rounded-2xl hover:border-accent/60 transition-all duration-300 hover:shadow-2xl hover:scale-[1.03] overflow-hidden"
-                                    >
-                                        <div className="absolute top-0 right-0 w-32 h-32 bg-accent/5 rounded-full -mr-16 -mt-16 group-hover:scale-150 transition-transform duration-500"></div>
-                                        <div className="relative z-10">
-                                            <div className="flex items-center justify-between mb-3">
-                                                <div className="p-3 bg-gradient-to-br from-accent to-accent/70 rounded-xl shadow-lg">
-                                                    <Settings className="h-8 w-8 text-accent-foreground" />
-                                                </div>
-                                                <span className="text-accent text-3xl group-hover:translate-x-2 transition-transform duration-300">→</span>
-                                            </div>
-                                            <h3 className="text-xl font-bold text-foreground mb-2">Admin Panel</h3>
-                                            <p className="text-sm text-muted-foreground leading-relaxed">
-                                                Manage employees, projects, annual leave, and calendar markers
-                                            </p>
-                                        </div>
-                                    </a>
-                                )}
                             </div>
                             
                             <div className="p-8 bg-gradient-to-br from-muted/50 to-muted/30 rounded-xl border-2 border-border shadow-inner backdrop-blur-sm">

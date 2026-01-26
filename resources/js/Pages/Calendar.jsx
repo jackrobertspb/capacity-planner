@@ -9,6 +9,13 @@ import AllocationForm from '@/Components/Allocation/AllocationForm';
 import CalendarMarkerForm from '@/Components/Calendar/CalendarMarkerForm';
 
 export default function Calendar({ startDate, endDate, users, projects, allocations, annualLeave, markers }) {
+    console.log('🔄 [Calendar] Component rendering with:', {
+        allocations: allocations?.length,
+        annualLeave: annualLeave?.length,
+        markers: markers?.length,
+        timestamp: new Date().toISOString()
+    });
+
     const { auth } = usePage().props;
     const view = 'month'; // Fixed to month view only
     const [viewMode, setViewMode] = useState('people'); // 'people' or 'project'
@@ -36,6 +43,11 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
     const [isCreatingPerson, setIsCreatingPerson] = useState(false);
     const addMenuRef = useRef(null);
 
+    // Optimistic UI state - immediately show new allocations/leave before server confirms
+    const [optimisticAllocations, setOptimisticAllocations] = useState([]);
+    const [optimisticAnnualLeave, setOptimisticAnnualLeave] = useState([]);
+    const [deletedAllocationIds, setDeletedAllocationIds] = useState(new Set());
+
     // Infinite scroll state
     const [loadedStartDate, setLoadedStartDate] = useState(parseISO(startDate));
     const [loadedEndDate, setLoadedEndDate] = useState(parseISO(endDate));
@@ -51,6 +63,77 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
         // Reset scroll position tracking when date range changes
         lastScrollLeft.current = 0;
     }, [startDate, endDate]);
+
+    // Merge optimistic data with server data
+    // For allocations, prefer optimistic versions (for edits) over server versions
+    // Also filter out deleted allocations
+    const displayAllocations = (() => {
+        const optimisticIds = new Set(optimisticAllocations.map(a => a.id).filter(Boolean));
+        const serverAllocations = allocations.filter(a =>
+            !optimisticIds.has(a.id) && !deletedAllocationIds.has(a.id)
+        );
+        const filteredOptimistic = optimisticAllocations.filter(a => !deletedAllocationIds.has(a.id));
+        return [...serverAllocations, ...filteredOptimistic];
+    })();
+    const displayAnnualLeave = (() => {
+        // Filter out server entries that match optimistic entries by user+dates
+        // This handles the case where server data arrives while we still have temp entries
+        const serverLeave = annualLeave.filter(serverEntry => {
+            // Check if any optimistic entry matches this server entry
+            const hasMatchingOptimistic = optimisticAnnualLeave.some(optEntry =>
+                optEntry.user_id === serverEntry.user_id &&
+                optEntry.start_date === serverEntry.start_date &&
+                optEntry.end_date === serverEntry.end_date
+            );
+            return !hasMatchingOptimistic;
+        });
+        return [...serverLeave, ...optimisticAnnualLeave];
+    })();
+
+    // Handler to remove a temporary optimistic leave entry on error
+    const handleRemoveOptimisticLeave = (tempId) => {
+        setOptimisticAnnualLeave(prev => prev.filter(l => l.id !== tempId));
+    };
+
+    // Debug: Log when allocations/leave data changes
+    useEffect(() => {
+        console.log('📊 [Calendar] Allocations prop updated:', {
+            count: allocations?.length,
+            ids: allocations?.map(a => a.id),
+            timestamp: new Date().toISOString()
+        });
+        // Note: We don't clear optimistic data here anymore to prevent flicker
+        // It's cleared in onFinish callbacks after form closes
+    }, [allocations]);
+
+    useEffect(() => {
+        // When server annualLeave updates, clean up any temp optimistic entries
+        // that now have matching real entries (same user+dates)
+        if (annualLeave?.length > 0 && optimisticAnnualLeave.length > 0) {
+            const tempEntriesToRemove = optimisticAnnualLeave.filter(optEntry => {
+                if (!optEntry._isTemporary) return false;
+                // Check if server now has this entry
+                return annualLeave.some(serverEntry =>
+                    serverEntry.user_id === optEntry.user_id &&
+                    serverEntry.start_date === optEntry.start_date &&
+                    serverEntry.end_date === optEntry.end_date
+                );
+            });
+            if (tempEntriesToRemove.length > 0) {
+                setOptimisticAnnualLeave(prev =>
+                    prev.filter(entry => !tempEntriesToRemove.some(t => t.id === entry.id))
+                );
+            }
+        }
+    }, [annualLeave]);
+
+    // Debug: Track form visibility
+    useEffect(() => {
+        console.log('👁️ [Calendar] Allocation form visibility changed:', {
+            visible: showAllocationForm,
+            timestamp: new Date().toISOString()
+        });
+    }, [showAllocationForm]);
 
     const goToToday = () => {
         // Full page reload to calendar without any query params
@@ -172,15 +255,32 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
         try {
             setAllocationDate(startDate);
             setAllocationUserId(userId);
-            setEditingAllocation({
+
+            const newAllocation = {
                 start_date: startDate,
                 end_date: endDate || startDate,
                 user_id: userId,
                 type: 'project',
                 days_per_week: 5.0,
-            });
+                title: 'New allocation',
+                // Add temporary ID so we can identify and replace it later
+                id: `temp-${Date.now()}`,
+                _isTemporary: true,
+                // Add a placeholder project object for display
+                project: {
+                    name: 'New allocation',
+                    color: '#8b5cf6',
+                },
+            };
+
+            setEditingAllocation(newAllocation);
+
+            // Immediately add to optimistic state so it appears in UI
+            console.log('✨ [Calendar] Adding temporary allocation to optimistic state');
+            setOptimisticAllocations(prev => [...prev, newAllocation]);
+
             setShowAllocationForm(true);
-            console.log('Form should now be visible');
+            console.log('Form should now be visible with allocation in UI');
         } catch (error) {
             console.error('Error in handleAddAllocation:', error);
         }
@@ -195,10 +295,26 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
 
     const handleDeleteAllocation = async (allocationId) => {
         try {
+            // Optimistically mark as deleted - it will be filtered out in display
+            console.log('🗑️ [Calendar] Optimistically marking allocation as deleted:', allocationId);
+            setDeletedAllocationIds(prev => new Set([...prev, allocationId]));
+
+            // Make the delete API call
             router.delete(`/allocations/${allocationId}`, {
                 preserveScroll: true,
+                preserveState: true,
                 onSuccess: () => {
-                    router.reload({ only: ['allocations'] });
+                    console.log('✅ [Calendar] Allocation deleted successfully');
+                    // No need to reload - optimistic update already handled it
+                },
+                onError: (errors) => {
+                    console.error('❌ [Calendar] Error deleting allocation:', errors);
+                    // On error, remove from deleted set to restore the allocation
+                    setDeletedAllocationIds(prev => {
+                        const newSet = new Set(prev);
+                        newSet.delete(allocationId);
+                        return newSet;
+                    });
                 },
             });
         } catch (error) {
@@ -206,8 +322,37 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
         }
     };
 
-    const handleSaveAllocation = () => {
-        router.reload({ only: ['allocations'] });
+    const handleSaveAllocation = (savedData, isEdit = false) => {
+        console.log('🟢 [Calendar] handleSaveAllocation called', { savedData, isEdit });
+
+        if (savedData) {
+            if (isEdit) {
+                // Update existing allocation - replace in optimistic state
+                console.log('✨ [Calendar] Updating allocation in optimistic state');
+                setOptimisticAllocations(prev => {
+                    // Remove both the real ID and any temporary versions
+                    const filtered = prev.filter(a =>
+                        a.id !== savedData.id && !a._isTemporary
+                    );
+                    return [...filtered, savedData];
+                });
+            } else {
+                // Replace temporary allocation with real one from API
+                console.log('✨ [Calendar] Replacing temporary allocation with real one');
+                setOptimisticAllocations(prev => {
+                    // Remove temporary allocation and add the real one
+                    const filtered = prev.filter(a => !a._isTemporary);
+                    return [...filtered, savedData];
+                });
+            }
+        }
+
+        // Close form immediately - allocation is visible via optimistic state
+        setShowAllocationForm(false);
+        setEditingAllocation(null);
+        setAllocationDate(null);
+        setAllocationUserId(null);
+        console.log('🟢 [Calendar] Form closed, allocation visible in UI');
     };
 
     const handleAddMarker = (date) => {
@@ -226,8 +371,14 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
         try {
             router.delete(`/markers/${markerId}`, {
                 preserveScroll: true,
+                preserveState: true,
                 onSuccess: () => {
-                    router.reload({ only: ['markers'] });
+                    // Reload all calendar data atomically to prevent flickering
+                    router.reload({
+                        only: ['allocations', 'annualLeave', 'markers'],
+                        preserveScroll: true,
+                        preserveState: true,
+                    });
                 },
             });
         } catch (error) {
@@ -236,7 +387,18 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
     };
 
     const handleSaveMarker = () => {
-        router.reload({ only: ['markers'] });
+        // Reload all calendar data atomically to prevent flickering
+        // Form stays open with "Saving..." state until this completes
+        router.reload({
+            only: ['allocations', 'annualLeave', 'markers'],
+            preserveScroll: true,
+            onFinish: () => {
+                // Close the form only after reload is completely finished and new data is rendered
+                setShowMarkerForm(false);
+                setEditingMarker(null);
+                setMarkerDate(null);
+            },
+        });
     };
 
     // Close add menu when clicking outside
@@ -274,14 +436,6 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                             </div>
                             <div className="flex items-center gap-3">
                                 <span className="text-sm font-medium text-muted-foreground">{auth.user?.name}</span>
-                                {auth.user?.role === 'admin' && (
-                                    <a
-                                        href="/admin"
-                                        className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors px-2.5 py-1.5 rounded hover:bg-muted/50"
-                                    >
-                                        Admin Panel
-                                    </a>
-                                )}
                                 <Link
                                     href={route('profile.edit')}
                                     className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors px-2.5 py-1.5 rounded hover:bg-muted/50"
@@ -358,8 +512,8 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                                 dateRange={dateRange}
                                 users={users}
                                 projects={projects}
-                                allocations={allocations}
-                                annualLeave={annualLeave}
+                                allocations={displayAllocations}
+                                annualLeave={displayAnnualLeave}
                                 markers={markers}
                                 onAddAllocation={handleAddAllocation}
                                 onEditAllocation={handleEditAllocation}
@@ -369,6 +523,9 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                                 onDeleteMarker={handleDeleteMarker}
                                 onAddProject={() => setShowAddProjectModal(true)}
                                 onAddPerson={() => setShowAddPersonModal(true)}
+                                onOptimisticAllocation={(data) => setOptimisticAllocations(prev => [...prev, data])}
+                                onOptimisticLeave={(data) => setOptimisticAnnualLeave(prev => [...prev, data])}
+                                onRemoveOptimisticLeave={handleRemoveOptimisticLeave}
                                 auth={auth}
                                 onViewModeChange={setViewMode}
                                 onSortModeChange={setSortMode}
@@ -399,6 +556,9 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                     users={users}
                     projects={projects}
                     onClose={() => {
+                        // Remove temporary allocation if user cancels
+                        console.log('🚫 [Calendar] Form cancelled, removing temporary allocation');
+                        setOptimisticAllocations(prev => prev.filter(a => !a._isTemporary));
                         setShowAllocationForm(false);
                         setEditingAllocation(null);
                         setAllocationDate(null);
@@ -553,8 +713,9 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
 
                                         if (response.ok) {
                                             router.reload({
-                                                only: ['projects'],
+                                                only: ['projects', 'allocations'],
                                                 preserveScroll: true,
+                                                preserveState: true,
                                                 onFinish: () => {
                                                     setIsCreatingProject(false);
                                                 }
@@ -737,7 +898,9 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                                             console.log('✅ User created successfully:', responseData);
                                             console.log('🔄 Reloading page...');
                                             router.reload({
+                                                only: ['users', 'allocations', 'annualLeave'],
                                                 preserveScroll: true,
+                                                preserveState: true,
                                                 onFinish: () => {
                                                     setIsCreatingPerson(false);
                                                 }
