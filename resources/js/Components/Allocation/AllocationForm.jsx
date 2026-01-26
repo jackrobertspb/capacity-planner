@@ -2,11 +2,11 @@ import { useState } from 'react';
 import { router } from '@inertiajs/react';
 import { X } from 'lucide-react';
 
-export default function AllocationForm({ allocation, users = [], projects = [], onClose, onSave }) {
-    console.log('AllocationForm start', { allocation, users, projects });
-    
+export default function AllocationForm({ allocation, employees = [], projects = [], onClose, onSave }) {
+    console.log('AllocationForm start', { allocation, employees, projects });
+
     const [formData, setFormData] = useState({
-        user_id: allocation?.user_id || '',
+        employee_id: allocation?.employee_id || '',
         project_id: allocation?.project_id || '',
         type: allocation?.type || 'project',
         title: allocation?.title || '',
@@ -120,25 +120,25 @@ export default function AllocationForm({ allocation, users = [], projects = [], 
                     )}
 
                     <div>
-                        <label htmlFor="user_id" className="block text-sm font-medium mb-2">
+                        <label htmlFor="employee_id" className="block text-sm font-medium mb-2">
                             Employee *
                         </label>
                         <select
-                            id="user_id"
-                            value={formData.user_id}
-                            onChange={(e) => setFormData({ ...formData, user_id: e.target.value })}
+                            id="employee_id"
+                            value={formData.employee_id}
+                            onChange={(e) => setFormData({ ...formData, employee_id: e.target.value })}
                             className="w-full px-3 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
                             required
                         >
                             <option value="">Select employee</option>
-                            {Array.isArray(users) && users.map((user) => (
-                                <option key={user.id} value={user.id}>
-                                    {user.name}
+                            {Array.isArray(employees) && employees.map((employee) => (
+                                <option key={employee.id} value={employee.id}>
+                                    {employee.name}
                                 </option>
                             ))}
                         </select>
-                        {errors.user_id && (
-                            <div className="text-destructive text-sm mt-1">{errors.user_id}</div>
+                        {errors.employee_id && (
+                            <div className="text-destructive text-sm mt-1">{errors.employee_id}</div>
                         )}
                     </div>
 

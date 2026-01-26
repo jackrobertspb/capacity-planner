@@ -3,9 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\AnnualLeave;
+use App\Models\Employee;
 use App\Models\Project;
 use App\Models\ProjectAllocation;
-use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -20,11 +20,11 @@ class ProjectAllocationController extends Controller
         $request->validate([
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
-            'user_id' => 'nullable|exists:users,id',
+            'employee_id' => 'nullable|exists:employees,id',
             'project_id' => 'nullable|exists:projects,id',
         ]);
 
-        $query = ProjectAllocation::with(['user', 'project']);
+        $query = ProjectAllocation::with(['employee', 'project']);
 
         if ($request->has('start_date') && $request->has('end_date')) {
             $query->where(function ($q) use ($request) {
@@ -37,8 +37,8 @@ class ProjectAllocationController extends Controller
             });
         }
 
-        if ($request->has('user_id')) {
-            $query->where('user_id', $request->user_id);
+        if ($request->has('employee_id')) {
+            $query->where('employee_id', $request->employee_id);
         }
 
         if ($request->has('project_id')) {
@@ -48,7 +48,7 @@ class ProjectAllocationController extends Controller
         return response()->json($query->get()->map(function ($allocation) {
             return [
                 'id' => $allocation->id,
-                'user_id' => $allocation->user_id,
+                'employee_id' => $allocation->employee_id,
                 'project_id' => $allocation->project_id,
                 'type' => $allocation->type,
                 'title' => $allocation->title,
@@ -56,9 +56,9 @@ class ProjectAllocationController extends Controller
                 'end_date' => $allocation->end_date ? $allocation->end_date->toDateString() : null,
                 'days_per_week' => (float) $allocation->days_per_week,
                 'notes' => $allocation->notes,
-                'user' => $allocation->user ? [
-                    'id' => $allocation->user->id,
-                    'name' => $allocation->user->name,
+                'employee' => $allocation->employee ? [
+                    'id' => $allocation->employee->id,
+                    'name' => $allocation->employee->name,
                 ] : null,
                 'project' => $allocation->project ? [
                     'id' => $allocation->project->id,
@@ -75,7 +75,7 @@ class ProjectAllocationController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'user_id' => 'required|exists:users,id',
+            'employee_id' => 'required|exists:employees,id',
             'project_id' => 'nullable|exists:projects,id',
             'type' => 'required|in:project,sla,misc',
             'title' => 'nullable|string|max:255',
@@ -101,7 +101,7 @@ class ProjectAllocationController extends Controller
 
         // Check for annual leave conflicts
         $warnings = $this->checkAnnualLeaveConflicts(
-            $validated['user_id'],
+            $validated['employee_id'],
             $validated['start_date'],
             $validated['end_date']
         );
@@ -111,7 +111,7 @@ class ProjectAllocationController extends Controller
         return response()->json([
             'allocation' => [
                 'id' => $allocation->id,
-                'user_id' => $allocation->user_id,
+                'employee_id' => $allocation->employee_id,
                 'project_id' => $allocation->project_id,
                 'type' => $allocation->type,
                 'title' => $allocation->title,
@@ -135,7 +135,7 @@ class ProjectAllocationController extends Controller
     public function update(Request $request, ProjectAllocation $projectAllocation)
     {
         $validated = $request->validate([
-            'user_id' => 'sometimes|required|exists:users,id',
+            'employee_id' => 'sometimes|required|exists:employees,id',
             'project_id' => 'nullable|exists:projects,id',
             'type' => 'sometimes|required|in:project,sla,misc',
             'title' => 'nullable|string|max:255',
@@ -164,21 +164,21 @@ class ProjectAllocationController extends Controller
         if (isset($validated['start_date']) || isset($validated['end_date'])) {
             $startDate = $validated['start_date'] ?? ($projectAllocation->start_date ? $projectAllocation->start_date->toDateString() : null);
             $endDate = $validated['end_date'] ?? ($projectAllocation->end_date ? $projectAllocation->end_date->toDateString() : null);
-            $userId = $validated['user_id'] ?? $projectAllocation->user_id;
+            $employeeId = $validated['employee_id'] ?? $projectAllocation->employee_id;
 
             if ($startDate && $endDate) {
-                $warnings = $this->checkAnnualLeaveConflicts($userId, $startDate, $endDate);
+                $warnings = $this->checkAnnualLeaveConflicts($employeeId, $startDate, $endDate);
             }
         }
 
         $projectAllocation->update($validated);
         $projectAllocation->refresh();
-        $projectAllocation->load(['user', 'project']);
+        $projectAllocation->load(['employee', 'project']);
 
         return response()->json([
             'allocation' => [
                 'id' => $projectAllocation->id,
-                'user_id' => $projectAllocation->user_id,
+                'employee_id' => $projectAllocation->employee_id,
                 'project_id' => $projectAllocation->project_id,
                 'type' => $projectAllocation->type,
                 'title' => $projectAllocation->title,
@@ -209,9 +209,9 @@ class ProjectAllocationController extends Controller
     /**
      * Check for annual leave conflicts.
      */
-    private function checkAnnualLeaveConflicts($userId, $startDate, $endDate)
+    private function checkAnnualLeaveConflicts($employeeId, $startDate, $endDate)
     {
-        $conflicts = AnnualLeave::where('user_id', $userId)
+        $conflicts = AnnualLeave::where('employee_id', $employeeId)
             ->where(function ($query) use ($startDate, $endDate) {
                 $query->whereBetween('start_date', [$startDate, $endDate])
                     ->orWhereBetween('end_date', [$startDate, $endDate])

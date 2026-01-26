@@ -1,15 +1,16 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Head, Link, router, usePage } from '@inertiajs/react';
 import { format, startOfMonth, endOfMonth, addMonths, subMonths, isSameDay, isWithinInterval, parseISO } from 'date-fns';
-import { Plus, User, FolderPlus, X } from 'lucide-react';
+import { Plus, FolderPlus, X, UserPlus, Copy, Check } from 'lucide-react';
 import DarkModeToggle from '@/Components/DarkModeToggle';
 import CalendarHeader from '@/Components/Calendar/CalendarHeader';
 import CalendarGrid from '@/Components/Calendar/CalendarGrid';
 import AllocationForm from '@/Components/Allocation/AllocationForm';
 import CalendarMarkerForm from '@/Components/Calendar/CalendarMarkerForm';
 
-export default function Calendar({ startDate, endDate, users, projects, allocations, annualLeave, markers }) {
+export default function Calendar({ startDate, endDate, employees, projects, allocations, annualLeave, markers }) {
     console.log('🔄 [Calendar] Component rendering with:', {
+        employees: employees?.length,
         allocations: allocations?.length,
         annualLeave: annualLeave?.length,
         markers: markers?.length,
@@ -34,13 +35,18 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
     const [newProjectName, setNewProjectName] = useState('');
     const [newProjectStatus, setNewProjectStatus] = useState('to_do');
     const [newProjectColor, setNewProjectColor] = useState('#64748b');
-    const [showAddPersonModal, setShowAddPersonModal] = useState(false);
-    const [newPersonFirstName, setNewPersonFirstName] = useState('');
-    const [newPersonLastName, setNewPersonLastName] = useState('');
-    const [newPersonCapacity, setNewPersonCapacity] = useState(5);
-    const [newPersonCanAccess, setNewPersonCanAccess] = useState(false);
     const [isCreatingProject, setIsCreatingProject] = useState(false);
-    const [isCreatingPerson, setIsCreatingPerson] = useState(false);
+
+    // Invite user modal state
+    const [showInviteModal, setShowInviteModal] = useState(false);
+    const [inviteFirstName, setInviteFirstName] = useState('');
+    const [inviteLastName, setInviteLastName] = useState('');
+    const [inviteEmail, setInviteEmail] = useState('');
+    const [inviteRole, setInviteRole] = useState('user');
+    const [isCreatingInvite, setIsCreatingInvite] = useState(false);
+    const [inviteUrl, setInviteUrl] = useState('');
+    const [inviteErrors, setInviteErrors] = useState({});
+    const [copied, setCopied] = useState(false);
     const addMenuRef = useRef(null);
 
     // Optimistic UI state - immediately show new allocations/leave before server confirms
@@ -250,16 +256,16 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
         end: parseISO(endDate),
     };
 
-    const handleAddAllocation = (startDate, userId, endDate = null) => {
-        console.log('handleAddAllocation called', { startDate, endDate, userId, users, projects });
+    const handleAddAllocation = (startDate, employeeId, endDate = null) => {
+        console.log('handleAddAllocation called', { startDate, endDate, employeeId, employees, projects });
         try {
             setAllocationDate(startDate);
-            setAllocationUserId(userId);
+            setAllocationUserId(employeeId);
 
             const newAllocation = {
                 start_date: startDate,
                 end_date: endDate || startDate,
-                user_id: userId,
+                employee_id: employeeId,
                 type: 'project',
                 days_per_week: 5.0,
                 title: 'New allocation',
@@ -427,12 +433,14 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                                 <h1 className="text-base font-semibold text-foreground">
                                     Capacity Planner
                                 </h1>
-                                <Link
-                                    href={route('projects')}
-                                    className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors px-2.5 py-1.5 rounded hover:bg-muted/50"
-                                >
-                                    Projects
-                                </Link>
+{auth.user?.role === 'admin' && (
+                                    <Link
+                                        href={route('users.index')}
+                                        className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors px-2.5 py-1.5 rounded hover:bg-muted/50"
+                                    >
+                                        User Management
+                                    </Link>
+                                )}
                             </div>
                             <div className="flex items-center gap-3">
                                 <span className="text-sm font-medium text-muted-foreground">{auth.user?.name}</span>
@@ -468,12 +476,12 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                                                 <button
                                                     onClick={() => {
                                                         setShowAddMenu(false);
-                                                        setShowAddPersonModal(true);
+                                                        setShowInviteModal(true);
                                                     }}
                                                     className="w-full px-4 py-2.5 text-left text-sm text-foreground hover:bg-muted transition-colors flex items-center gap-3 cursor-pointer"
                                                 >
-                                                    <User className="h-4 w-4" />
-                                                    <span>Add person</span>
+                                                    <UserPlus className="h-4 w-4" />
+                                                    <span>Invite user</span>
                                                 </button>
                                             )}
                                         </div>
@@ -494,12 +502,14 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                 </nav>
 
                 <div className="flex flex-col h-[calc(100vh-56px)]">
-                    <div className="flex-shrink-0 py-4">
-                        <CalendarHeader
-                            currentDate={currentDate}
-                            onToday={goToToday}
-                        />
-                    </div>
+                    {employees.length > 0 && (
+                        <div className="flex-shrink-0 py-4">
+                            <CalendarHeader
+                                currentDate={currentDate}
+                                onToday={goToToday}
+                            />
+                        </div>
+                    )}
 
                     <div className="flex-1 overflow-hidden pb-4">
                         <CalendarGrid
@@ -510,7 +520,7 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                                 isCompressed={isCompressed}
                                 currentDate={currentDate}
                                 dateRange={dateRange}
-                                users={users}
+                                employees={employees}
                                 projects={projects}
                                 allocations={displayAllocations}
                                 annualLeave={displayAnnualLeave}
@@ -522,7 +532,7 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                                 onEditMarker={handleEditMarker}
                                 onDeleteMarker={handleDeleteMarker}
                                 onAddProject={() => setShowAddProjectModal(true)}
-                                onAddPerson={() => setShowAddPersonModal(true)}
+                                onAddPerson={() => setShowInviteModal(true)}
                                 onOptimisticAllocation={(data) => setOptimisticAllocations(prev => [...prev, data])}
                                 onOptimisticLeave={(data) => setOptimisticAnnualLeave(prev => [...prev, data])}
                                 onRemoveOptimisticLeave={handleRemoveOptimisticLeave}
@@ -550,10 +560,10 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                 )}
             </div>
 
-            {showAllocationForm && users && projects && (
+            {showAllocationForm && employees && projects && (
                 <AllocationForm
                     allocation={editingAllocation}
-                    users={users}
+                    employees={employees}
                     projects={projects}
                     onClose={() => {
                         // Remove temporary allocation if user cancels
@@ -742,32 +752,47 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
                 </>
             )}
 
-            {/* Add Person Modal */}
-            {showAddPersonModal && (
+            {/* Invite User Modal */}
+            {showInviteModal && (
                 <>
                     {/* Backdrop */}
                     <div
-                        className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center"
-                        onClick={() => setShowAddPersonModal(false)}
+                        className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center"
+                        onClick={() => {
+                            if (!inviteUrl) {
+                                setShowInviteModal(false);
+                                setInviteErrors({});
+                            }
+                        }}
                     />
 
                     {/* Modal */}
                     <div
-                        className="fixed z-50 w-full max-w-md rounded-lg shadow-2xl"
+                        className="fixed z-50 w-full max-w-md rounded-lg shadow-2xl bg-card"
                         style={{
                             left: '50%',
                             top: '50%',
-                            transform: 'translate(-50%, -50%)',
-                            backgroundColor: '#2d2d2d'
+                            transform: 'translate(-50%, -50%)'
                         }}
                         onClick={(e) => e.stopPropagation()}
                     >
                         {/* Header */}
-                        <div className="flex items-center justify-between p-6 border-b" style={{ borderColor: '#3d3d3d' }}>
-                            <h2 className="text-xl font-semibold text-white">Add new person</h2>
+                        <div className="flex items-center justify-between p-6 border-b border-border">
+                            <h2 className="text-xl font-semibold text-foreground">
+                                {inviteUrl ? 'Invitation Created' : 'Invite User'}
+                            </h2>
                             <button
-                                onClick={() => setShowAddPersonModal(false)}
-                                className="text-gray-400 hover:text-white transition-colors cursor-pointer"
+                                onClick={() => {
+                                    setShowInviteModal(false);
+                                    setInviteFirstName('');
+                                    setInviteLastName('');
+                                    setInviteEmail('');
+                                    setInviteRole('user');
+                                    setInviteUrl('');
+                                    setInviteErrors({});
+                                    setCopied(false);
+                                }}
+                                className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                             >
                                 <X className="h-5 w-5" />
                             </button>
@@ -775,158 +800,196 @@ export default function Calendar({ startDate, endDate, users, projects, allocati
 
                         {/* Body */}
                         <div className="p-6 space-y-4">
-                            {/* First name */}
-                            <div>
-                                <label className="block text-sm font-medium text-white mb-2">
-                                    First name<span className="text-red-500">*</span>
-                                </label>
-                                <input
-                                    type="text"
-                                    placeholder="E.g. John"
-                                    value={newPersonFirstName}
-                                    onChange={(e) => setNewPersonFirstName(e.target.value)}
-                                    className="w-full px-3 py-2.5 text-white rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50"
-                                    style={{ backgroundColor: '#3d3d3d', border: 'none' }}
-                                />
-                            </div>
-
-                            {/* Last name */}
-                            <div>
-                                <label className="block text-sm font-medium text-white mb-2">
-                                    Last name<span className="text-red-500">*</span>
-                                </label>
-                                <input
-                                    type="text"
-                                    placeholder="E.g. Doe"
-                                    value={newPersonLastName}
-                                    onChange={(e) => setNewPersonLastName(e.target.value)}
-                                    className="w-full px-3 py-2.5 text-white rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50"
-                                    style={{ backgroundColor: '#3d3d3d', border: 'none' }}
-                                />
-                            </div>
-
-                            {/* Capacity */}
-                            <div>
-                                <label className="block text-sm font-medium text-white mb-2">
-                                    Capacity<span className="text-red-500">*</span>
-                                </label>
-                                <div className="flex items-center gap-3">
-                                    <input
-                                        type="number"
-                                        placeholder="E.g 5"
-                                        value={newPersonCapacity}
-                                        onChange={(e) => setNewPersonCapacity(Number(e.target.value))}
-                                        min="0"
-                                        max="7"
-                                        className="w-24 px-3 py-2.5 text-white rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50"
-                                        style={{ backgroundColor: '#3d3d3d', border: 'none' }}
-                                    />
-                                    <span className="text-sm text-gray-400">Days per week</span>
+                            {inviteUrl ? (
+                                // Success state - show the URL to copy
+                                <div className="space-y-4">
+                                    <p className="text-sm text-muted-foreground">
+                                        Send this link to <span className="font-medium text-foreground">{inviteFirstName} {inviteLastName}</span> to complete their account setup:
+                                    </p>
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="text"
+                                            readOnly
+                                            value={inviteUrl}
+                                            className="flex-1 px-3 py-2.5 text-sm text-foreground bg-muted border border-border rounded-md"
+                                        />
+                                        <button
+                                            onClick={() => {
+                                                navigator.clipboard.writeText(inviteUrl);
+                                                setCopied(true);
+                                                setTimeout(() => setCopied(false), 2000);
+                                            }}
+                                            className="p-2.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors cursor-pointer"
+                                            title="Copy to clipboard"
+                                        >
+                                            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                                        </button>
+                                    </div>
+                                    {copied && (
+                                        <p className="text-sm text-green-600 dark:text-green-400">Copied to clipboard!</p>
+                                    )}
+                                    <p className="text-xs text-muted-foreground">
+                                        This link will expire in 7 days.
+                                    </p>
                                 </div>
-                            </div>
+                            ) : (
+                                // Form state
+                                <>
+                                    {/* First name */}
+                                    <div>
+                                        <label className="block text-sm font-medium text-foreground mb-2">
+                                            First name<span className="text-destructive">*</span>
+                                        </label>
+                                        <input
+                                            type="text"
+                                            placeholder="e.g. John"
+                                            value={inviteFirstName}
+                                            onChange={(e) => setInviteFirstName(e.target.value)}
+                                            className="w-full px-3 py-2 text-foreground bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                                        />
+                                        {inviteErrors.first_name && (
+                                            <p className="text-sm text-destructive mt-1">{inviteErrors.first_name}</p>
+                                        )}
+                                    </div>
 
-                            {/* Can access workspace - Toggle */}
-                            <div className="flex items-center justify-between pt-2">
-                                <label className="text-sm font-medium text-white cursor-pointer select-none">
-                                    Can access workspace
-                                </label>
-                                <button
-                                    type="button"
-                                    onClick={() => setNewPersonCanAccess(!newPersonCanAccess)}
-                                    className={`relative inline-flex h-6 w-11 items-center rounded-full focus:outline-none focus:ring-2 focus:ring-primary/50 cursor-pointer transition-colors duration-200 ease-in-out ${
-                                        newPersonCanAccess ? 'bg-primary' : 'bg-gray-600'
-                                    }`}
-                                >
-                                    <span
-                                        className={`inline-block h-4 w-4 rounded-full bg-white transition-transform duration-200 ease-in-out ${
-                                            newPersonCanAccess ? 'translate-x-6' : 'translate-x-1'
-                                        }`}
-                                    />
-                                </button>
-                            </div>
+                                    {/* Last name */}
+                                    <div>
+                                        <label className="block text-sm font-medium text-foreground mb-2">
+                                            Last name<span className="text-destructive">*</span>
+                                        </label>
+                                        <input
+                                            type="text"
+                                            placeholder="e.g. Doe"
+                                            value={inviteLastName}
+                                            onChange={(e) => setInviteLastName(e.target.value)}
+                                            className="w-full px-3 py-2 text-foreground bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                                        />
+                                        {inviteErrors.last_name && (
+                                            <p className="text-sm text-destructive mt-1">{inviteErrors.last_name}</p>
+                                        )}
+                                    </div>
+
+                                    {/* Email */}
+                                    <div>
+                                        <label className="block text-sm font-medium text-foreground mb-2">
+                                            Email<span className="text-destructive">*</span>
+                                        </label>
+                                        <input
+                                            type="email"
+                                            placeholder="e.g. john@example.com"
+                                            value={inviteEmail}
+                                            onChange={(e) => setInviteEmail(e.target.value)}
+                                            className="w-full px-3 py-2 text-foreground bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                                        />
+                                        {inviteErrors.email && (
+                                            <p className="text-sm text-destructive mt-1">{inviteErrors.email}</p>
+                                        )}
+                                    </div>
+
+                                    {/* Role */}
+                                    <div>
+                                        <label className="block text-sm font-medium text-foreground mb-2">
+                                            Role
+                                        </label>
+                                        <select
+                                            value={inviteRole}
+                                            onChange={(e) => setInviteRole(e.target.value)}
+                                            className="w-full px-3 py-2 text-foreground bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer"
+                                        >
+                                            <option value="user">User</option>
+                                            <option value="admin">Admin</option>
+                                        </select>
+                                        <p className="text-xs text-muted-foreground mt-1">
+                                            {inviteRole === 'admin' ? 'Can manage users and access admin panel' : 'Standard user access'}
+                                        </p>
+                                        {inviteErrors.role && (
+                                            <p className="text-sm text-destructive mt-1">{inviteErrors.role}</p>
+                                        )}
+                                    </div>
+                                </>
+                            )}
                         </div>
 
                         {/* Footer */}
-                        <div className="flex items-center justify-end gap-3 p-6 border-t" style={{ borderColor: '#3d3d3d' }}>
-                            <button
-                                onClick={() => setShowAddPersonModal(false)}
-                                className="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white rounded-md transition-colors cursor-pointer"
-                                style={{ backgroundColor: 'transparent' }}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={async () => {
-                                    if (!newPersonFirstName.trim() || !newPersonLastName.trim() || isCreatingPerson) return;
+                        <div className="flex items-center justify-end gap-3 p-6 border-t border-border">
+                            {inviteUrl ? (
+                                <button
+                                    onClick={() => {
+                                        setShowInviteModal(false);
+                                        setInviteFirstName('');
+                                        setInviteLastName('');
+                                        setInviteEmail('');
+                                        setInviteRole('user');
+                                        setInviteUrl('');
+                                        setInviteErrors({});
+                                        setCopied(false);
+                                    }}
+                                    className="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors cursor-pointer"
+                                >
+                                    Done
+                                </button>
+                            ) : (
+                                <>
+                                    <button
+                                        onClick={() => {
+                                            setShowInviteModal(false);
+                                            setInviteErrors({});
+                                        }}
+                                        className="px-4 py-2 text-sm font-medium text-foreground hover:bg-muted rounded-md transition-colors cursor-pointer"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={async () => {
+                                            if (!inviteFirstName.trim() || !inviteLastName.trim() || !inviteEmail.trim() || isCreatingInvite) return;
 
-                                    setIsCreatingPerson(true);
-                                    console.log('🚀 Starting person creation...');
-                                    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
-                                    console.log('🔑 CSRF Token:', csrfToken ? 'Found' : 'Missing');
-                                    console.log('🔑 Full CSRF Token value:', csrfToken);
-                                    console.log('🔍 CSRF meta tag element:', document.querySelector('meta[name="csrf-token"]'));
+                                            setIsCreatingInvite(true);
+                                            setInviteErrors({});
+                                            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
 
-                                    const userData = {
-                                        name: `${newPersonFirstName} ${newPersonLastName}`,
-                                        email: `${newPersonFirstName.toLowerCase()}.${newPersonLastName.toLowerCase()}.${Date.now()}@example.com`,
-                                        password: 'password',
-                                        role: newPersonCanAccess ? 'user' : 'guest',
-                                        work_days: [1, 2, 3, 4, 5].slice(0, newPersonCapacity),
-                                        annual_leave_default: 25,
-                                        is_visible: true,
-                                    };
-                                    console.log('📦 User data to send:', userData);
+                                            try {
+                                                const response = await fetch('/api/invitations', {
+                                                    method: 'POST',
+                                                    headers: {
+                                                        'Content-Type': 'application/json',
+                                                        'X-Requested-With': 'XMLHttpRequest',
+                                                        'Accept': 'application/json',
+                                                        'X-CSRF-TOKEN': csrfToken,
+                                                    },
+                                                    body: JSON.stringify({
+                                                        first_name: inviteFirstName,
+                                                        last_name: inviteLastName,
+                                                        email: inviteEmail,
+                                                        role: inviteRole,
+                                                    }),
+                                                });
 
-                                    try {
-                                        console.log('📡 Sending POST request to /api/users...');
-                                        const response = await fetch('/api/users', {
-                                            method: 'POST',
-                                            headers: {
-                                                'Content-Type': 'application/json',
-                                                'X-Requested-With': 'XMLHttpRequest',
-                                                'Accept': 'application/json',
-                                                'X-CSRF-TOKEN': csrfToken,
-                                            },
-                                            body: JSON.stringify(userData),
-                                        });
+                                                const data = await response.json();
 
-                                        console.log('📨 Response status:', response.status);
-                                        console.log('📨 Response OK:', response.ok);
-
-                                        if (response.ok) {
-                                            const responseData = await response.json();
-                                            console.log('✅ User created successfully:', responseData);
-                                            console.log('🔄 Reloading page...');
-                                            router.reload({
-                                                only: ['users', 'allocations', 'annualLeave'],
-                                                preserveScroll: true,
-                                                preserveState: true,
-                                                onFinish: () => {
-                                                    setIsCreatingPerson(false);
+                                                if (response.ok) {
+                                                    setInviteUrl(data.invitation_url);
+                                                    // Reload to show new user in lists
+                                                    router.reload({
+                                                        only: ['employees'],
+                                                        preserveScroll: true,
+                                                        preserveState: true,
+                                                    });
+                                                } else {
+                                                    setInviteErrors(data.errors || { email: data.message || 'Failed to create invitation' });
                                                 }
-                                            });
-                                            setShowAddPersonModal(false);
-                                            setNewPersonFirstName('');
-                                            setNewPersonLastName('');
-                                            setNewPersonCapacity(5);
-                                            setNewPersonCanAccess(false);
-                                        } else {
-                                            const errorData = await response.json();
-                                            console.error('❌ Error creating person:', response.status, errorData);
-                                            alert(`Failed to create person: ${errorData.message || 'Unknown error'}`);
-                                            setIsCreatingPerson(false);
-                                        }
-                                    } catch (error) {
-                                        console.error('❌ Exception creating person:', error);
-                                        alert(`Error creating person: ${error.message}`);
-                                        setIsCreatingPerson(false);
-                                    }
-                                }}
-                                disabled={!newPersonFirstName.trim() || !newPersonLastName.trim() || isCreatingPerson}
-                                className="px-5 py-2 text-sm font-medium bg-primary text-white rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                            >
-                                {isCreatingPerson ? 'Adding...' : 'Add person'}
-                            </button>
+                                            } catch (error) {
+                                                setInviteErrors({ email: `Error: ${error.message}` });
+                                            } finally {
+                                                setIsCreatingInvite(false);
+                                            }
+                                        }}
+                                        disabled={!inviteFirstName.trim() || !inviteLastName.trim() || !inviteEmail.trim() || isCreatingInvite}
+                                        className="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                                    >
+                                        {isCreatingInvite ? 'Creating...' : 'Create Invitation'}
+                                    </button>
+                                </>
+                            )}
                         </div>
                     </div>
                 </>

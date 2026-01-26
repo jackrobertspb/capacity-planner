@@ -15,11 +15,11 @@ class AnnualLeaveController extends Controller
 
         try {
             $validated = $request->validate([
-                'user_id' => 'required|exists:users,id',
+                'employee_id' => 'required|exists:employees,id',
                 'start_date' => 'required|date',
                 'end_date' => 'required|date|after_or_equal:start_date',
                 'days_count' => 'required|integer|min:1',
-                'status' => 'required|in:pending,approved,rejected',
+                'status' => 'sometimes|in:pending,approved,rejected',
             ]);
 
             \Log::info('Validated data:', $validated);

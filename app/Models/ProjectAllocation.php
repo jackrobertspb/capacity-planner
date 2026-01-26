@@ -9,6 +9,7 @@ class ProjectAllocation extends Model
 {
     protected $fillable = [
         'user_id',
+        'employee_id',
         'project_id',
         'type',
         'title',
@@ -28,11 +29,19 @@ class ProjectAllocation extends Model
     }
 
     /**
-     * Get the user that owns the allocation.
+     * Get the user that owns the allocation (legacy).
      */
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /**
+     * Get the employee for the allocation.
+     */
+    public function employee(): BelongsTo
+    {
+        return $this->belongsTo(Employee::class);
     }
 
     /**

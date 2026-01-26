@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\AnnualLeave;
 use App\Models\CalendarMarker;
+use App\Models\Employee;
 use App\Models\Project;
 use App\Models\ProjectAllocation;
 use App\Models\User;
@@ -25,16 +26,15 @@ class CalendarController extends Controller
         $startDate = $request->input('start_date', $defaultStart);
         $endDate = $request->input('end_date', $defaultEnd);
 
-        // Get visible employees (including guests for capacity planning)
-        $users = User::where('is_visible', true)
+        // Get visible employees for capacity planning
+        $employees = Employee::where('is_visible', true)
             ->orderBy('name')
             ->get()
-            ->map(function ($user) {
+            ->map(function ($employee) {
                 return [
-                    'id' => $user->id,
-                    'name' => $user->name,
-                    'email' => $user->email,
-                    'work_days' => $user->work_days ?? [1, 2, 3, 4, 5],
+                    'id' => $employee->id,
+                    'name' => $employee->name,
+                    'work_days' => $employee->work_days ?? [1, 2, 3, 4, 5],
                 ];
             });
 
@@ -52,7 +52,7 @@ class CalendarController extends Controller
             });
 
         // Get project allocations filtered by date range (with overlap handling)
-        $allocations = ProjectAllocation::with(['user', 'project'])
+        $allocations = ProjectAllocation::with(['employee', 'project'])
             ->where(function($query) use ($startDate, $endDate) {
                 $query->where(function($q) use ($startDate, $endDate) {
                     // Starts within range
@@ -70,7 +70,7 @@ class CalendarController extends Controller
             ->map(function ($allocation) {
                 return [
                     'id' => $allocation->id,
-                    'user_id' => $allocation->user_id,
+                    'employee_id' => $allocation->employee_id,
                     'project_id' => $allocation->project_id,
                     'type' => $allocation->type,
                     'title' => $allocation->title,
@@ -87,7 +87,7 @@ class CalendarController extends Controller
             });
 
         // Get annual leave filtered by date range (with overlap handling)
-        $annualLeave = AnnualLeave::with('user')
+        $annualLeave = AnnualLeave::with('employee')
             ->where(function($query) use ($startDate, $endDate) {
                 $query->where(function($q) use ($startDate, $endDate) {
                     // Starts within range
@@ -105,7 +105,7 @@ class CalendarController extends Controller
             ->map(function ($leave) {
                 return [
                     'id' => $leave->id,
-                    'user_id' => $leave->user_id,
+                    'employee_id' => $leave->employee_id,
                     'start_date' => $leave->start_date ? $leave->start_date->toDateString() : null,
                     'end_date' => $leave->end_date ? $leave->end_date->toDateString() : null,
                     'days_count' => $leave->days_count,
@@ -131,7 +131,7 @@ class CalendarController extends Controller
         return Inertia::render('Calendar', [
             'startDate' => $startDate,
             'endDate' => $endDate,
-            'users' => $users,
+            'employees' => $employees,
             'projects' => $projects,
             'allocations' => $allocations,
             'annualLeave' => $annualLeave,

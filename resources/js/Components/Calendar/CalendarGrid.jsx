@@ -26,6 +26,9 @@ import {
     ArrowDownAZ,
     ChevronsDownUp,
     ChevronsUpDown,
+    MoreHorizontal,
+    Trash2,
+    Pencil,
 } from "lucide-react";
 import AllocationBlock from "../Allocation/AllocationBlock";
 import { router, Link } from "@inertiajs/react";
@@ -37,7 +40,7 @@ const CalendarGrid = forwardRef(({
     isCompressed,
     currentDate,
     dateRange,
-    users,
+    employees,
     projects,
     allocations,
     annualLeave,
@@ -104,7 +107,7 @@ const CalendarGrid = forwardRef(({
     };
 
     const rows = getSortedRows(
-        viewMode === "people" ? users : getProjectRows(),
+        viewMode === "people" ? employees : getProjectRows(),
     );
 
     const [hoveredCell, setHoveredCell] = useState(null);
@@ -145,6 +148,10 @@ const CalendarGrid = forwardRef(({
     // Context menu for allocations
     const [contextMenu, setContextMenu] = useState(null); // { allocation, isLeave, x, y }
 
+    // Employee menu state
+    const [employeeMenu, setEmployeeMenu] = useState(null); // { employee, x, y }
+    const [editingEmployeeName, setEditingEmployeeName] = useState(null); // { id, name }
+
     // Initialize all rows as expanded by default
     const [expandedRows, setExpandedRows] = useState({});
 
@@ -155,7 +162,7 @@ const CalendarGrid = forwardRef(({
             initialExpanded[row.id] = !isCompressed; // Expand if not compressed
         });
         setExpandedRows(initialExpanded);
-    }, [users.length, projects.length, viewMode, isCompressed]);
+    }, [employees.length, projects.length, viewMode, isCompressed]);
 
     const getDaysInView = () => {
         if (view === "day") {
@@ -285,6 +292,7 @@ const CalendarGrid = forwardRef(({
                     if (isLeave) {
                         await fetch(`/annual-leave/${allocation.id}`, {
                             method: "PUT",
+                            credentials: "same-origin",
                             headers: {
                                 "Content-Type": "application/json",
                                 "X-Requested-With": "XMLHttpRequest",
@@ -300,6 +308,7 @@ const CalendarGrid = forwardRef(({
                     } else {
                         await fetch(`/allocations/${allocation.id}`, {
                             method: "PUT",
+                            credentials: "same-origin",
                             headers: {
                                 "Content-Type": "application/json",
                                 "X-Requested-With": "XMLHttpRequest",
@@ -358,9 +367,9 @@ const CalendarGrid = forwardRef(({
     const getRowProjects = (row) => {
         if (viewMode === "people") {
             const userAllocations = allocations.filter(
-                (a) => a.user_id === row.id,
+                (a) => a.employee_id === row.id,
             );
-            const userLeave = annualLeave.filter((l) => l.user_id === row.id);
+            const userLeave = annualLeave.filter((l) => l.employee_id === row.id);
 
             const projectMap = new Map();
 
@@ -489,7 +498,7 @@ const CalendarGrid = forwardRef(({
             // Handle time-off (annual leave)
             if (dragProjectId === "time-off") {
                 const payload = {
-                    user_id: dragRowId,
+                    employee_id: dragRowId,
                     start_date: format(startDay, "yyyy-MM-dd"),
                     end_date: format(endDay, "yyyy-MM-dd"),
                     days_count: daysCount,
@@ -500,7 +509,7 @@ const CalendarGrid = forwardRef(({
                 const tempId = `temp-leave-${Date.now()}`;
                 const optimisticEntry = {
                     id: tempId,
-                    user_id: dragRowId,
+                    employee_id: dragRowId,
                     start_date: format(startDay, "yyyy-MM-dd"),
                     end_date: format(endDay, "yyyy-MM-dd"),
                     days_count: daysCount,
@@ -518,6 +527,7 @@ const CalendarGrid = forwardRef(({
                 // The optimistic entry stays visible; we only remove it on error
                 fetch("/annual-leave", {
                     method: "POST",
+                    credentials: "same-origin",
                     headers: {
                         "Content-Type": "application/json",
                         "X-Requested-With": "XMLHttpRequest",
@@ -547,7 +557,7 @@ const CalendarGrid = forwardRef(({
             } else {
                 // Handle project allocation
                 const payload = {
-                    user_id: dragRowId,
+                    employee_id: dragRowId,
                     project_id: dragProjectId,
                     type: "project",
                     start_date: format(startDay, "yyyy-MM-dd"),
@@ -560,6 +570,7 @@ const CalendarGrid = forwardRef(({
 
                 const response = await fetch("/allocations", {
                     method: "POST",
+                    credentials: "same-origin",
                     headers: {
                         "Content-Type": "application/json",
                         "X-Requested-With": "XMLHttpRequest",
@@ -642,7 +653,7 @@ const CalendarGrid = forwardRef(({
                     const tempId = `temp-leave-${Date.now()}`;
                     const optimisticEntry = {
                         id: tempId,
-                        user_id: currentDragRowId,
+                        employee_id: currentDragRowId,
                         start_date: format(startDay, "yyyy-MM-dd"),
                         end_date: format(endDay, "yyyy-MM-dd"),
                         days_count: daysCount,
@@ -661,6 +672,7 @@ const CalendarGrid = forwardRef(({
                     const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || "";
                     fetch("/annual-leave", {
                         method: "POST",
+                        credentials: "same-origin",
                         headers: {
                             "Content-Type": "application/json",
                             "X-Requested-With": "XMLHttpRequest",
@@ -668,7 +680,7 @@ const CalendarGrid = forwardRef(({
                             "X-CSRF-TOKEN": csrfToken,
                         },
                         body: JSON.stringify({
-                            user_id: currentDragRowId,
+                            employee_id: currentDragRowId,
                             start_date: format(startDay, "yyyy-MM-dd"),
                             end_date: format(endDay, "yyyy-MM-dd"),
                             days_count: daysCount,
@@ -691,7 +703,7 @@ const CalendarGrid = forwardRef(({
                     // Handle project allocation inline (can't call handleDragNewEnd since state is already cleared)
                     const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || "";
                     const payload = {
-                        user_id: currentDragRowId,
+                        employee_id: currentDragRowId,
                         project_id: currentDragProjectId,
                         type: "project",
                         start_date: format(startDay, "yyyy-MM-dd"),
@@ -704,6 +716,7 @@ const CalendarGrid = forwardRef(({
 
                     fetch("/allocations", {
                         method: "POST",
+                        credentials: "same-origin",
                         headers: {
                             "Content-Type": "application/json",
                             "X-Requested-With": "XMLHttpRequest",
@@ -958,6 +971,7 @@ const CalendarGrid = forwardRef(({
                             `/annual-leave/${allocation.id}`,
                             {
                                 method: "PUT",
+                                credentials: "same-origin",
                                 headers: {
                                     "Content-Type": "application/json",
                                     "X-Requested-With": "XMLHttpRequest",
@@ -1020,6 +1034,7 @@ const CalendarGrid = forwardRef(({
                             `/allocations/${allocation.id}`,
                             {
                                 method: "PUT",
+                                credentials: "same-origin",
                                 headers: {
                                     "Content-Type": "application/json",
                                     "X-Requested-With": "XMLHttpRequest",
@@ -1382,6 +1397,33 @@ const CalendarGrid = forwardRef(({
         );
     };
 
+    // Show empty state when no employees in people view
+    if (rows.length === 0) {
+        return (
+            <div className="relative h-full flex flex-col items-center justify-center">
+                <div className="text-center">
+                    <div className="text-foreground text-lg font-medium">
+                        {viewMode === "people"
+                            ? "No employees yet"
+                            : "No projects yet"}
+                    </div>
+                    <div className="text-muted-foreground text-sm mt-1">
+                        {viewMode === "people"
+                            ? "Add employees to start planning and tracking capacity"
+                            : "Add projects to start assigning work"}
+                    </div>
+                    <button
+                        onClick={viewMode === "people" ? onAddPerson : onAddProject}
+                        className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors inline-flex items-center gap-2 font-medium cursor-pointer"
+                    >
+                        <Plus className="h-4 w-4" />
+                        {viewMode === "people" ? "Add Employee" : "Add Project"}
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="relative h-full flex flex-col">
             <div ref={ref} className="relative flex-1 overflow-x-auto overflow-y-hidden custom-scrollbar">
@@ -1601,27 +1643,7 @@ const CalendarGrid = forwardRef(({
                         </tr>
                     </thead>
                     <tbody>
-                        {rows.length === 0 ? (
-                            <tr>
-                                <td
-                                    colSpan={days.length + 1}
-                                    style={{
-                                        borderRight:
-                                            "1px solid hsl(var(--border))",
-                                        borderBottom:
-                                            "1px solid hsl(var(--border))",
-                                    }}
-                                    className="p-8 text-center text-muted-foreground"
-                                >
-                                    No{" "}
-                                    {viewMode === "people"
-                                        ? "employees"
-                                        : "projects"}{" "}
-                                    available
-                                </td>
-                            </tr>
-                        ) : (
-                            rows.map((row, rowIdx) => {
+                        {rows.map((row, rowIdx) => {
                                 const isExpanded = expandedRows[row.id];
                                 const rowProjects = getRowProjects(row);
 
@@ -1682,10 +1704,59 @@ const CalendarGrid = forwardRef(({
                                                             .charAt(0)
                                                             .toUpperCase()}
                                                     </div>
-                                                    <span className="font-medium text-sm text-foreground">
-                                                        {row.name}
-                                                    </span>
-                                                    <div className="w-2 h-2 rounded-full bg-primary opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                                                    {editingEmployeeName?.id === row.id ? (
+                                                        <input
+                                                            type="text"
+                                                            value={editingEmployeeName.name}
+                                                            onChange={(e) => setEditingEmployeeName({ ...editingEmployeeName, name: e.target.value })}
+                                                            onKeyDown={async (e) => {
+                                                                if (e.key === 'Enter') {
+                                                                    e.preventDefault();
+                                                                    try {
+                                                                        await fetch(`/api/employees/${row.id}`, {
+                                                                            method: 'PATCH',
+                                                                            headers: {
+                                                                                'Content-Type': 'application/json',
+                                                                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+                                                                            },
+                                                                            body: JSON.stringify({ name: editingEmployeeName.name }),
+                                                                        });
+                                                                        router.reload({ preserveScroll: true });
+                                                                    } catch (error) {
+                                                                        console.error('Error renaming employee:', error);
+                                                                    }
+                                                                    setEditingEmployeeName(null);
+                                                                } else if (e.key === 'Escape') {
+                                                                    setEditingEmployeeName(null);
+                                                                }
+                                                            }}
+                                                            onBlur={() => setEditingEmployeeName(null)}
+                                                            className="font-medium text-sm text-foreground bg-background border border-border rounded px-2 py-0.5 w-32 focus:outline-none focus:ring-1 focus:ring-primary"
+                                                            autoFocus
+                                                            onClick={(e) => e.stopPropagation()}
+                                                        />
+                                                    ) : (
+                                                        <span className="font-medium text-sm text-foreground">
+                                                            {row.name}
+                                                        </span>
+                                                    )}
+                                                    {viewMode === "people" && !row.isStatusGroup && (
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                const rect = e.currentTarget.getBoundingClientRect();
+                                                                setEmployeeMenu({
+                                                                    employee: row,
+                                                                    x: rect.left,
+                                                                    y: rect.bottom + 4,
+                                                                });
+                                                            }}
+                                                            className="ml-auto p-1 rounded hover:bg-muted/70 cursor-pointer"
+                                                            title="More options"
+                                                        >
+                                                            <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
+                                                        </button>
+                                                    )}
                                                 </div>
                                             </td>
 
@@ -1925,8 +1996,8 @@ const CalendarGrid = forwardRef(({
 
                                                                     // Check if preview applies to this row/project
                                                                     const appliesToThisRow = draggingAllocation.isLeave
-                                                                        ? project.type === "leave" && draggedAlloc.user_id === row.id
-                                                                        : project.id === draggedAlloc.project_id && draggedAlloc.user_id === row.id;
+                                                                        ? project.type === "leave" && draggedAlloc.employee_id === row.id
+                                                                        : project.id === draggedAlloc.project_id && draggedAlloc.employee_id === row.id;
 
                                                                     if (appliesToThisRow) {
                                                                         // Check if this day is within the preview range
@@ -2065,11 +2136,11 @@ const CalendarGrid = forwardRef(({
                                                                                     draggingAllocation.isLeave
                                                                                         ? project.type ===
                                                                                               "leave" &&
-                                                                                          draggedAlloc.user_id ===
+                                                                                          draggedAlloc.employee_id ===
                                                                                               row.id
                                                                                         : project.id ===
                                                                                               draggedAlloc.project_id &&
-                                                                                          draggedAlloc.user_id ===
+                                                                                          draggedAlloc.employee_id ===
                                                                                               row.id;
 
                                                                                 if (
@@ -2268,8 +2339,7 @@ const CalendarGrid = forwardRef(({
                                             )}
                                     </>
                                 );
-                            })
-                        )}
+                            })}
                         {/* Filler row to extend borders to bottom */}
                         <tr style={{ height: "100%" }}>
                             <td
@@ -2458,6 +2528,7 @@ const CalendarGrid = forwardRef(({
                                                         `/annual-leave/${contextMenu.allocation.id}`,
                                                         {
                                                             method: "DELETE",
+                                                            credentials: "same-origin",
                                                             headers: {
                                                                 "X-Requested-With":
                                                                     "XMLHttpRequest",
@@ -2504,6 +2575,64 @@ const CalendarGrid = forwardRef(({
                                     Close
                                 </button>
                             </div>
+                        </div>
+                    </>
+                )}
+
+                {/* Employee Menu */}
+                {employeeMenu && (
+                    <>
+                        {/* Backdrop */}
+                        <div
+                            className="fixed inset-0 z-40"
+                            onClick={() => setEmployeeMenu(null)}
+                        />
+
+                        {/* Menu */}
+                        <div
+                            className="fixed rounded-lg shadow-2xl p-1 z-50 min-w-[160px]"
+                            style={{
+                                left: `${employeeMenu.x}px`,
+                                top: `${employeeMenu.y}px`,
+                                backgroundColor: "hsl(var(--card))",
+                            }}
+                        >
+                            <button
+                                onClick={() => {
+                                    setEditingEmployeeName({
+                                        id: employeeMenu.employee.id,
+                                        name: employeeMenu.employee.name,
+                                    });
+                                    setEmployeeMenu(null);
+                                }}
+                                className="w-full px-3 py-2 text-sm text-left hover:bg-muted rounded transition-colors flex items-center gap-2 cursor-pointer"
+                            >
+                                <Pencil className="h-4 w-4 text-muted-foreground" />
+                                <span>Rename</span>
+                            </button>
+
+                            <button
+                                onClick={async () => {
+                                    if (confirm(`Are you sure you want to delete ${employeeMenu.employee.name}? This will also delete all their allocations and leave records.`)) {
+                                        try {
+                                            await fetch(`/api/employees/${employeeMenu.employee.id}`, {
+                                                method: 'DELETE',
+                                                headers: {
+                                                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+                                                },
+                                            });
+                                            router.reload({ preserveScroll: true });
+                                        } catch (error) {
+                                            console.error('Error deleting employee:', error);
+                                        }
+                                    }
+                                    setEmployeeMenu(null);
+                                }}
+                                className="w-full px-3 py-2 text-sm text-left hover:bg-destructive/10 text-destructive rounded transition-colors flex items-center gap-2 cursor-pointer"
+                            >
+                                <Trash2 className="h-4 w-4" />
+                                <span>Delete</span>
+                            </button>
                         </div>
                     </>
                 )}

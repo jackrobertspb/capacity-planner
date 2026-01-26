@@ -29,6 +29,12 @@ class User extends Authenticatable implements FilamentUser
         'work_days',
         'is_visible',
         'annual_leave_default',
+        'supabase_id',
+        'status',
+        'invited_at',
+        'invited_by',
+        'invitation_token',
+        'invitation_expires_at',
     ];
 
     /**
@@ -54,6 +60,8 @@ class User extends Authenticatable implements FilamentUser
             'work_days' => 'array',
             'is_visible' => 'boolean',
             'annual_leave_default' => 'integer',
+            'invited_at' => 'datetime',
+            'invitation_expires_at' => 'datetime',
         ];
     }
 
@@ -111,5 +119,37 @@ class User extends Authenticatable implements FilamentUser
     public function isGuest(): bool
     {
         return $this->role === 'guest';
+    }
+
+    /**
+     * Check if the user has a pending invitation.
+     */
+    public function hasValidInvitation(): bool
+    {
+        return $this->status === 'invited'
+            && $this->invitation_token
+            && $this->invitation_expires_at
+            && $this->invitation_expires_at->isFuture();
+    }
+
+    /**
+     * Generate a new invitation token.
+     */
+    public function generateInvitationToken(): string
+    {
+        $token = bin2hex(random_bytes(32));
+        $this->invitation_token = $token;
+        $this->invitation_expires_at = now()->addDays(7);
+        $this->save();
+
+        return $token;
+    }
+
+    /**
+     * Get the invitation URL.
+     */
+    public function getInvitationUrl(): string
+    {
+        return url('/invitation/' . $this->invitation_token);
     }
 }

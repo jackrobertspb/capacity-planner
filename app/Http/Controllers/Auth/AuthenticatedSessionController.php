@@ -33,7 +33,8 @@ class AuthenticatedSessionController extends Controller
 
         $request->session()->regenerate();
 
-        return redirect()->intended(route('dashboard'));
+        // Use a full redirect (not Inertia) to ensure the new CSRF token is loaded
+        return redirect()->intended(route('dashboard'))->with('_refresh', true);
     }
 
     /**

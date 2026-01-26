@@ -20,7 +20,12 @@ export default function Login({ status, canResetPassword }) {
 
     const submit = (e) => {
         e.preventDefault();
-        post(route('login'));
+        post(route('login'), {
+            onSuccess: () => {
+                // Force full page reload to get fresh CSRF token after session regeneration
+                window.location.href = route('calendar');
+            },
+        });
     };
 
     return (

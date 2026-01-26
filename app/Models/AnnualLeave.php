@@ -11,6 +11,7 @@ class AnnualLeave extends Model
 
     protected $fillable = [
         'user_id',
+        'employee_id',
         'start_date',
         'end_date',
         'days_count',
@@ -27,10 +28,18 @@ class AnnualLeave extends Model
     }
 
     /**
-     * Get the user that owns the leave.
+     * Get the user that owns the leave (legacy).
      */
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /**
+     * Get the employee that owns the leave.
+     */
+    public function employee(): BelongsTo
+    {
+        return $this->belongsTo(Employee::class);
     }
 }
