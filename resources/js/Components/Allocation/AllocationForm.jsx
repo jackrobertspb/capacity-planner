@@ -7,9 +7,10 @@ import { Textarea } from "@/Components/ui/textarea";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/Components/ui/select";
 import { Label } from "@/Components/ui/label";
 import { Alert, AlertDescription } from "@/Components/ui/alert";
+import { Trash2 } from 'lucide-react';
 
-export default function AllocationForm({ allocation, employees = [], projects = [], onClose, onSave }) {
-    // console.log('AllocationForm start', { allocation, employees, projects });
+export default function AllocationForm({ allocation, employees = [], projects = [], onClose, onSave, onDelete }) {
+    console.log('AllocationForm start', { allocation, employees, projects });
 
     const [formData, setFormData] = useState({
         employee_id: allocation?.employee_id || '',
@@ -25,11 +26,11 @@ export default function AllocationForm({ allocation, employees = [], projects = 
     const [processing, setProcessing] = useState(false);
     const [warnings, setWarnings] = useState([]);
 
-    // console.log('AllocationForm after state init', { formData });
+    console.log('AllocationForm after state init', { formData });
 
     const submit = async (e) => {
         e.preventDefault();
-        // console.log('🔵 [AllocationForm] Submit started');
+        console.log('🔵 [AllocationForm] Submit started');
         setProcessing(true);
         setErrors({});
         setWarnings([]);
@@ -42,7 +43,7 @@ export default function AllocationForm({ allocation, employees = [], projects = 
             const method = allocation ? 'PUT' : 'POST';
 
             const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
-            // console.log('🔵 [AllocationForm] Sending request to:', url, 'Method:', method);
+            console.log('🔵 [AllocationForm] Sending request to:', url, 'Method:', method);
 
             const response = await fetch(url, {
                 method: method,
@@ -55,26 +56,26 @@ export default function AllocationForm({ allocation, employees = [], projects = 
                 body: JSON.stringify(formData),
             });
 
-            // console.log('🔵 [AllocationForm] Response received:', response.status);
+            console.log('🔵 [AllocationForm] Response received:', response.status);
             const result = await response.json();
-            // console.log('🔵 [AllocationForm] Response data:', result);
+            console.log('🔵 [AllocationForm] Response data:', result);
 
             if (response.ok) {
                 if (result.warnings && result.warnings.length > 0) {
-                    // console.log('⚠️ [AllocationForm] Warnings found, keeping form open');
+                    console.log('⚠️ [AllocationForm] Warnings found, keeping form open');
                     setWarnings(result.warnings);
                     setProcessing(false);
                 } else {
-                    // console.log('✅ [AllocationForm] Success! Calling onSave()');
+                    console.log('✅ [AllocationForm] Success! Calling onSave()');
                     // Pass the saved allocation data and whether it was an edit
                     // Check if it's a real edit (has allocation without _isTemporary flag)
                     const isEdit = !!allocation && !allocation._isTemporary;
-                    // console.log('🔍 [AllocationForm] isEdit check:', { hasAllocation: !!allocation, isTemporary: allocation?._isTemporary, isEdit });
+                    console.log('🔍 [AllocationForm] isEdit check:', { hasAllocation: !!allocation, isTemporary: allocation?._isTemporary, isEdit });
                     onSave(result, isEdit);
                     // Form will close immediately now - no need to keep processing state
                 }
             } else {
-                // console.log('❌ [AllocationForm] Request failed');
+                console.log('❌ [AllocationForm] Request failed');
                 if (result.errors) {
                     setErrors(result.errors);
                 } else if (result.message) {
@@ -261,13 +262,33 @@ export default function AllocationForm({ allocation, employees = [], projects = 
                         )}
                     </div>
 
-                    <div className="flex justify-end gap-3 pt-6 border-t border-border">
-                        <Button type="button" variant="outline" onClick={onClose}>
-                            Cancel
-                        </Button>
-                        <Button type="submit" disabled={processing}>
-                            {processing ? 'Saving...' : 'Save Allocation'}
-                        </Button>
+                    <div className="flex justify-between pt-6 border-t border-border">
+                        {allocation && !allocation._isTemporary && onDelete ? (
+                            <Button
+                                type="button"
+                                variant="destructive"
+                                onClick={() => {
+                                    if (confirm('Are you sure you want to delete this allocation?')) {
+                                        onDelete(allocation.id);
+                                        onClose();
+                                    }
+                                }}
+                                disabled={processing}
+                            >
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                Delete
+                            </Button>
+                        ) : (
+                            <div></div>
+                        )}
+                        <div className="flex gap-3">
+                            <Button type="button" variant="outline" onClick={onClose}>
+                                Cancel
+                            </Button>
+                            <Button type="submit" disabled={processing}>
+                                {processing ? 'Saving...' : 'Save Allocation'}
+                            </Button>
+                        </div>
                     </div>
                 </form>
             </DialogContent>

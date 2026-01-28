@@ -1,15 +1,22 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Head, Link, router, usePage } from '@inertiajs/react';
 import { format, startOfMonth, endOfMonth, addMonths, subMonths, isSameDay, isWithinInterval, parseISO, differenceInDays } from 'date-fns';
-import { Plus, FolderPlus, X, UserPlus } from 'lucide-react';
+import { Plus, FolderPlus, X, UserPlus, ChevronLeft, ChevronRight } from 'lucide-react';
 import DarkModeToggle from '@/Components/DarkModeToggle';
-import CalendarHeader from '@/Components/Calendar/CalendarHeader';
 import CalendarGrid from '@/Components/Calendar/CalendarGrid';
 import AllocationForm from '@/Components/Allocation/AllocationForm';
 import CalendarMarkerForm from '@/Components/Calendar/CalendarMarkerForm';
 import AddEmployeeModal from '@/Components/Employee/AddEmployeeModal';
 
-export default function Calendar({ startDate, endDate, employees, projects, allocations, annualLeave, markers, assignments }) {
+export default function Calendar({ startDate, endDate, employees, projects, allocations, annualLeave, markers }) {
+    console.log('🔄 [Calendar] Component rendering with:', {
+        employees: employees?.length,
+        allocations: allocations?.length,
+        annualLeave: annualLeave?.length,
+        markers: markers?.length,
+        timestamp: new Date().toISOString()
+    });
+
     const { auth } = usePage().props;
     const view = 'month'; // Fixed to month view only
     const [viewMode, setViewMode] = useState('people'); // 'people' or 'project'
@@ -52,21 +59,9 @@ export default function Calendar({ startDate, endDate, employees, projects, allo
     useEffect(() => {
         setLoadedStartDate(parseISO(startDate));
         setLoadedEndDate(parseISO(endDate));
-        // Note: Don't reset lastScrollLeft here - it's managed by the scroll handlers
-        // and the initial scroll effect. Resetting it here breaks infinite scroll.
+        // Reset scroll position tracking when date range changes
+        lastScrollLeft.current = 0;
     }, [startDate, endDate]);
-
-    // Clear optimistic allocations with real IDs when server data refreshes
-    // This ensures updated project names/colors are reflected after edits
-    // Use a stable key based on allocation data to avoid unnecessary runs
-    const allocationsKey = useMemo(() =>
-        allocations.map(a => `${a.id}:${a.project?.name}:${a.project?.color}`).join(','),
-        [allocations]
-    );
-    useEffect(() => {
-        setOptimisticAllocations(prev => prev.filter(a => a._isTemporary));
-        setDeletedAllocationIds(new Set());
-    }, [allocationsKey]);
 
     // Scroll to current month on initial load
     useEffect(() => {
@@ -126,6 +121,16 @@ export default function Calendar({ startDate, endDate, employees, projects, allo
         setOptimisticAnnualLeave(prev => prev.filter(l => l.id !== tempId));
     };
 
+    // Debug: Log when allocations/leave data changes
+    useEffect(() => {
+        console.log('📊 [Calendar] Allocations prop updated:', {
+            count: allocations?.length,
+            ids: allocations?.map(a => a.id),
+            timestamp: new Date().toISOString()
+        });
+        // Note: We don't clear optimistic data here anymore to prevent flicker
+        // It's cleared in onFinish callbacks after form closes
+    }, [allocations]);
 
     useEffect(() => {
         // When server annualLeave updates, clean up any temp optimistic entries
@@ -148,44 +153,18 @@ export default function Calendar({ startDate, endDate, employees, projects, allo
         }
     }, [annualLeave]);
 
+    // Debug: Track form visibility
+    useEffect(() => {
+        console.log('👁️ [Calendar] Allocation form visibility changed:', {
+            visible: showAllocationForm,
+            timestamp: new Date().toISOString()
+        });
+    }, [showAllocationForm]);
+
     const goToToday = () => {
-        const container = scrollContainerRef.current;
-        if (!container) return;
-
-        const today = new Date();
-        const loadedStart = parseISO(startDate);
-        const loadedEnd = parseISO(endDate);
-
-        // Check if today is within the loaded date range
-        if (today >= loadedStart && today <= loadedEnd) {
-            // Calculate days from loaded start to today
-            const daysToToday = differenceInDays(today, loadedStart);
-            // Each day column is 60px wide, sidebar is 275px + 2px border
-            // Center today in the viewport
-            const viewportWidth = container.clientWidth;
-            const todayPosition = 275 + 2 + (daysToToday * 60) + 30; // +30 to center of column
-            const scrollPosition = todayPosition - (viewportWidth / 2);
-            container.scrollTo({ left: Math.max(0, scrollPosition), behavior: 'smooth' });
-        } else {
-            // Today is outside loaded range, reload to get fresh data
-            window.location.href = route('calendar');
-        }
-    };
-
-    // Scroll the calendar left by approximately one month (30 days * 60px)
-    const scrollLeft = () => {
-        const container = scrollContainerRef.current;
-        if (!container) return;
-        const scrollAmount = 30 * 60; // 30 days worth of columns
-        container.scrollBy({ left: -scrollAmount, behavior: 'smooth' });
-    };
-
-    // Scroll the calendar right by approximately one month (30 days * 60px)
-    const scrollRight = () => {
-        const container = scrollContainerRef.current;
-        if (!container) return;
-        const scrollAmount = 30 * 60; // 30 days worth of columns
-        container.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+        // Full page reload to calendar without any query params
+        // This ensures we get fresh data for current month only
+        window.location.href = route('calendar');
     };
 
     // Infinite scroll: Load previous date range
@@ -213,15 +192,11 @@ export default function Calendar({ startDate, endDate, employees, projects, allo
             preserveScroll: false,
             onSuccess: () => {
                 // CRITICAL: Restore scroll position after prepending content
-                // Use fresh ref to get the new container after Inertia re-renders
                 requestAnimationFrame(() => {
-                    const currentContainer = scrollContainerRef.current;
-                    if (currentContainer) {
-                        const newScrollWidth = currentContainer.scrollWidth;
+                    if (container) {
+                        const newScrollWidth = container.scrollWidth;
                         const addedWidth = newScrollWidth - prevScrollWidth;
-                        currentContainer.scrollLeft = prevScrollLeft + addedWidth;
-                        // Update lastScrollLeft to the restored position
-                        lastScrollLeft.current = prevScrollLeft + addedWidth;
+                        container.scrollLeft = prevScrollLeft + addedWidth;
                     }
                 });
 
@@ -239,9 +214,6 @@ export default function Calendar({ startDate, endDate, employees, projects, allo
         // Load 30 days after current end
         const newEndDate = format(addMonths(loadedEndDate, 1), 'yyyy-MM-dd');
 
-        // Store current scroll position
-        const currentScrollLeft = scrollContainerRef.current?.scrollLeft || 0;
-
         router.get(route('calendar'), {
             start_date: format(loadedStartDate, 'yyyy-MM-dd'),
             end_date: newEndDate,
@@ -249,15 +221,6 @@ export default function Calendar({ startDate, endDate, employees, projects, allo
             preserveState: true,
             preserveScroll: true, // Keep scroll position when appending
             onSuccess: () => {
-                // Update lastScrollLeft to prevent re-triggering scroll handler
-                requestAnimationFrame(() => {
-                    const currentContainer = scrollContainerRef.current;
-                    if (currentContainer) {
-                        // Restore scroll position in case it shifted
-                        currentContainer.scrollLeft = currentScrollLeft;
-                        lastScrollLeft.current = currentScrollLeft;
-                    }
-                });
                 setIsLoadingNext(false);
             },
             onError: () => setIsLoadingNext(false),
@@ -313,42 +276,24 @@ export default function Calendar({ startDate, endDate, employees, projects, allo
         end: parseISO(endDate),
     };
 
-    const handleAddAllocation = (startDate, employeeId, projectIdOrEndDate = null, endDate = null) => {
-        // Handle both old signature (startDate, employeeId, endDate) and new (startDate, employeeId, projectId)
-        // If projectIdOrEndDate is a number, it's a project ID; if it's a string date, it's endDate
-        let projectId = null;
-        let actualEndDate = endDate;
-
-        if (typeof projectIdOrEndDate === 'number') {
-            projectId = projectIdOrEndDate;
-        } else if (projectIdOrEndDate && typeof projectIdOrEndDate === 'string') {
-            // Check if it looks like a date
-            if (projectIdOrEndDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
-                actualEndDate = projectIdOrEndDate;
-            }
-        }
-
-        // console.log('handleAddAllocation called', { startDate, actualEndDate, employeeId, projectId, employees, projects });
+    const handleAddAllocation = (startDate, employeeId, endDate = null) => {
+        console.log('handleAddAllocation called', { startDate, endDate, employeeId, employees, projects });
         try {
             setAllocationDate(startDate);
             setAllocationUserId(employeeId);
 
-            // Find the project if projectId is provided
-            const selectedProject = projectId ? projects.find(p => p.id === projectId) : null;
-
             const newAllocation = {
                 start_date: startDate,
-                end_date: actualEndDate || startDate,
+                end_date: endDate || startDate,
                 employee_id: employeeId,
-                project_id: projectId,
                 type: 'project',
                 days_per_week: 5.0,
-                title: selectedProject ? selectedProject.name : 'New allocation',
+                title: 'New allocation',
                 // Add temporary ID so we can identify and replace it later
                 id: `temp-${Date.now()}`,
                 _isTemporary: true,
                 // Add a placeholder project object for display
-                project: selectedProject || {
+                project: {
                     name: 'New allocation',
                     color: '#8b5cf6',
                 },
@@ -357,11 +302,11 @@ export default function Calendar({ startDate, endDate, employees, projects, allo
             setEditingAllocation(newAllocation);
 
             // Immediately add to optimistic state so it appears in UI
-            // console.log('✨ [Calendar] Adding temporary allocation to optimistic state');
+            console.log('✨ [Calendar] Adding temporary allocation to optimistic state');
             setOptimisticAllocations(prev => [...prev, newAllocation]);
 
             setShowAllocationForm(true);
-            // console.log('Form should now be visible with allocation in UI');
+            console.log('Form should now be visible with allocation in UI');
         } catch (error) {
             console.error('Error in handleAddAllocation:', error);
         }
@@ -377,7 +322,7 @@ export default function Calendar({ startDate, endDate, employees, projects, allo
     const handleDeleteAllocation = async (allocationId) => {
         try {
             // Optimistically mark as deleted - it will be filtered out in display
-            // console.log('🗑️ [Calendar] Optimistically marking allocation as deleted:', allocationId);
+            console.log('🗑️ [Calendar] Optimistically marking allocation as deleted:', allocationId);
             setDeletedAllocationIds(prev => new Set([...prev, allocationId]));
 
             // Make the delete API call
@@ -385,7 +330,7 @@ export default function Calendar({ startDate, endDate, employees, projects, allo
                 preserveScroll: true,
                 preserveState: true,
                 onSuccess: () => {
-                    // console.log('✅ [Calendar] Allocation deleted successfully');
+                    console.log('✅ [Calendar] Allocation deleted successfully');
                     // No need to reload - optimistic update already handled it
                 },
                 onError: (errors) => {
@@ -404,12 +349,12 @@ export default function Calendar({ startDate, endDate, employees, projects, allo
     };
 
     const handleSaveAllocation = (savedData, isEdit = false) => {
-        // console.log('🟢 [Calendar] handleSaveAllocation called', { savedData, isEdit });
+        console.log('🟢 [Calendar] handleSaveAllocation called', { savedData, isEdit });
 
         if (savedData) {
             if (isEdit) {
                 // Update existing allocation - replace in optimistic state
-                // console.log('✨ [Calendar] Updating allocation in optimistic state');
+                console.log('✨ [Calendar] Updating allocation in optimistic state');
                 setOptimisticAllocations(prev => {
                     // Remove both the real ID and any temporary versions
                     const filtered = prev.filter(a =>
@@ -419,7 +364,7 @@ export default function Calendar({ startDate, endDate, employees, projects, allo
                 });
             } else {
                 // Replace temporary allocation with real one from API
-                // console.log('✨ [Calendar] Replacing temporary allocation with real one');
+                console.log('✨ [Calendar] Replacing temporary allocation with real one');
                 setOptimisticAllocations(prev => {
                     // Remove temporary allocation and add the real one
                     const filtered = prev.filter(a => !a._isTemporary);
@@ -433,7 +378,7 @@ export default function Calendar({ startDate, endDate, employees, projects, allo
         setEditingAllocation(null);
         setAllocationDate(null);
         setAllocationUserId(null);
-        // console.log('🟢 [Calendar] Form closed, allocation visible in UI');
+        console.log('🟢 [Calendar] Form closed, allocation visible in UI');
     };
 
     const handleAddMarker = (date) => {
@@ -501,17 +446,15 @@ export default function Calendar({ startDate, endDate, employees, projects, allo
             <Head title="Calendar" />
 
             <div className="min-h-screen bg-background">
-                <nav className="bg-card border-b border-border sticky top-0 z-50">
+                <nav className="border-b border-border sticky top-0 z-50 bg-white dark:bg-[#292929]">
                     <div className="max-w-full px-4">
-                        <div className="flex justify-between h-14">
-                            <div className="flex items-center gap-4">
-                                <Link
-                                    href={route('calendar')}
-                                    className="text-base font-semibold text-foreground hover:text-primary transition-colors"
-                                >
+                        <div className="flex items-center h-14">
+                            {/* Left section */}
+                            <div className="flex items-center gap-4 flex-1">
+                                <h1 className="text-base font-semibold text-foreground">
                                     Capacity Planner
-                                </Link>
-{auth.user?.role === 'admin' && (
+                                </h1>
+                                {auth.user?.role === 'admin' && (
                                     <Link
                                         href={route('users.index')}
                                         className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors px-2.5 py-1.5 rounded hover:bg-muted/50"
@@ -521,19 +464,33 @@ export default function Calendar({ startDate, endDate, employees, projects, allo
                                 )}
                             </div>
 
-                            {/* Calendar Navigation - Centered */}
-                            {employees.length > 0 && (
-                                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-                                    <CalendarHeader
-                                        currentDate={currentDate}
-                                        onToday={goToToday}
-                                        onScrollLeft={scrollLeft}
-                                        onScrollRight={scrollRight}
-                                    />
-                                </div>
-                            )}
+                            {/* Center section - Today with arrows */}
+                            <div className="flex items-center gap-1 bg-muted rounded-lg px-1 py-1">
+                                <button
+                                    onClick={() => scrollContainerRef.current?.scrollBy({ left: -420, behavior: 'smooth' })}
+                                    className="p-1.5 hover:bg-background rounded transition-colors text-muted-foreground hover:text-foreground cursor-pointer"
+                                    title="Scroll left"
+                                >
+                                    <ChevronLeft className="h-4 w-4" />
+                                </button>
+                                <button
+                                    onClick={goToToday}
+                                    className="px-4 py-1.5 text-sm font-medium bg-background hover:bg-background/80 rounded transition-colors text-foreground cursor-pointer"
+                                    title="Go to today"
+                                >
+                                    Today
+                                </button>
+                                <button
+                                    onClick={() => scrollContainerRef.current?.scrollBy({ left: 420, behavior: 'smooth' })}
+                                    className="p-1.5 hover:bg-background rounded transition-colors text-muted-foreground hover:text-foreground cursor-pointer"
+                                    title="Scroll right"
+                                >
+                                    <ChevronRight className="h-4 w-4" />
+                                </button>
+                            </div>
 
-                            <div className="flex items-center gap-3">
+                            {/* Right section */}
+                            <div className="flex items-center gap-3 flex-1 justify-end">
                                 <span className="text-sm font-medium text-muted-foreground">{auth.user?.name}</span>
                                 <Link
                                     href={route('profile.edit')}
@@ -591,7 +548,7 @@ export default function Calendar({ startDate, endDate, employees, projects, allo
                 </nav>
 
                 <div className="flex flex-col h-[calc(100vh-56px)]">
-                    <div className="flex-1" style={{ minWidth: 0 }}>
+                    <div className="flex-1 pb-4" style={{ minWidth: 0 }}>
                         <CalendarGrid
                                 ref={scrollContainerRef}
                                 view={view}
@@ -605,7 +562,6 @@ export default function Calendar({ startDate, endDate, employees, projects, allo
                                 allocations={displayAllocations}
                                 annualLeave={displayAnnualLeave}
                                 markers={markers}
-                                assignments={assignments || []}
                                 onAddAllocation={handleAddAllocation}
                                 onEditAllocation={handleEditAllocation}
                                 onDeleteAllocation={handleDeleteAllocation}
@@ -636,7 +592,7 @@ export default function Calendar({ startDate, endDate, employees, projects, allo
                     projects={projects}
                     onClose={() => {
                         // Remove temporary allocation if user cancels
-                        // console.log('🚫 [Calendar] Form cancelled, removing temporary allocation');
+                        console.log('🚫 [Calendar] Form cancelled, removing temporary allocation');
                         setOptimisticAllocations(prev => prev.filter(a => !a._isTemporary));
                         setShowAllocationForm(false);
                         setEditingAllocation(null);
@@ -644,6 +600,7 @@ export default function Calendar({ startDate, endDate, employees, projects, allo
                         setAllocationUserId(null);
                     }}
                     onSave={handleSaveAllocation}
+                    onDelete={handleDeleteAllocation}
                 />
             )}
 
